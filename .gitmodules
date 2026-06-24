@@ -1,0 +1,6 @@
+[submodule "submodules/python-opentimestamps"]
+	path = submodules/python-opentimestamps
+	url = https://github.com/opentimestamps/python-opentimestamps.git
+[submodule "submodules/opentimestamps-server"]
+	path = submodules/opentimestamps-server
+	url = https://github.com/opentimestamps/opentimestamps-server.git
