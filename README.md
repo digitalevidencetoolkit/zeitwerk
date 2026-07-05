@@ -17,9 +17,9 @@ the lose-your-receipt-lose-your-proof problem.
 - Exports RFC 3161 tokens for legal-adjacent consumers.
 - Offline-verifiable, forever.
 
-## Links
+---
 
-- Project page: https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/
+See also: https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/
 
 [Zeitwerk](/tools/zeitwerk-timestamping/) is funded by the Federal Ministry of Education and Research under grant number 16IS26S28, administered through the Prototype Fund.
 
