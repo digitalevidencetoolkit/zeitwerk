@@ -15,12 +15,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 
-from opentimestamps.core.notary import TimeAttestation
+from opentimestamps.core.notary import (
+    PendingAttestation,
+    TimeAttestation,
+    UnknownAttestation,
+)
+from opentimestamps.core.serialize import (
+    BytesDeserializationContext,
+    BytesSerializationContext,
+    DeserializationError,
+)
 
-# 8-byte tagged-type tags. Placeholders — freeze final random tags before any
-# receipt ships (see issue #8).
-PENDING_TAG = bytes.fromhex("005a45495450454e")  # "\x00ZEITPEN"
-ANCHORED_TAG = bytes.fromhex("005a454954414e43")  # "\x00ZEITANC"
+# Inherited from the OTS base; re-exported so callers/tests have one import site.
+MAX_PAYLOAD_SIZE = TimeAttestation.MAX_PAYLOAD_SIZE
+
+# 8-byte tags. OpenTimestamps picks these at random and freezes them forever so
+# the tagged-type registry never collides.
+# TODO(#8): allocate the final random tags and freeze before any receipt ships.
+PENDING_TAG = bytes.fromhex("005a45495450454e")  # "\x00ZEITPEN", placeholder
+ANCHORED_TAG = bytes.fromhex("005a454954414e43")  # "\x00ZEITANC", placeholder
 
 
 class AnchorType(IntEnum):
@@ -67,10 +80,28 @@ class ZeitwerkAttestation(TimeAttestation):
 
 
 def serialize_attestation(att: TimeAttestation) -> bytes:
-    """Serialize a TimeAttestation to OTS wire bytes (TAG + varbytes payload)."""
-    raise NotImplementedError  # TODO
+    """Serialize any TimeAttestation to OTS wire bytes (TAG + varbytes payload)."""
+    ctx = BytesSerializationContext()
+    att.serialize(ctx)
+    return ctx.getbytes()
 
 
 def deserialize_attestation(buf: bytes) -> TimeAttestation:
-    """Parse OTS wire bytes back to an attestation."""
-    raise NotImplementedError  # TODO
+    """Parse OTS wire bytes back to an attestation.
+
+    zeitwerk tags decode to their typed class; any other tag decodes to
+    `UnknownAttestation` — the same graceful degradation a stock OTS client does.
+    """
+    ctx = BytesDeserializationContext(buf)
+    tag = ctx.read_bytes(TimeAttestation.TAG_SIZE)
+    payload = ctx.read_varbytes(TimeAttestation.MAX_PAYLOAD_SIZE)
+    ctx.assert_eof()
+
+    cls = _REGISTRY.get(tag)
+    if cls is None:
+        return UnknownAttestation(tag, payload)
+
+    payload_ctx = BytesDeserializationContext(payload)
+    att = cls.deserialize(payload_ctx)
+    payload_ctx.assert_eof()
+    return att
