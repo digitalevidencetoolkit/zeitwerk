@@ -1,13 +1,15 @@
 """zeitwerk attestation types — the leaf that terminates a timestamp proof.
 
-Two-state lifecycle, mirroring OpenTimestamps:
+Like OpenTimestamps, zeitwerk has a two-state lifecycle:
 
-    ZeitwerkPendingAttestation   submitted, not yet anchored
-    ZeitwerkAttestation          anchored, self-verifying
+    ZeitwerkPendingAttestation   submitted, not yet anchored   (cf. PendingAttestation)
+              │  upgrade (or /recover — rebuilt from the published leaf set)
+              ▼
+    ZeitwerkAttestation          anchored, self-verifying      (cf. BitcoinBlockHeaderAttestation)
 
-The wire format and (de)serialization are not implemented yet — see the method
-stubs below. These are `TimeAttestation` subclasses so they slot into the OTS
-tagged-type registry.
+The big difference: because a leaf's position is deterministic from H(document)
+and the epoch set is published, the upgrade does *not* depend on the
+original receipt surviving.
 """
 
 from __future__ import annotations
@@ -44,9 +46,24 @@ class AnchorType(IntEnum):
     TRANSPARENCY_LOG = 2  # transparency log with external witnesses
 
 
+# --- attestation leaves ------------------------------------------------------
+#
+# `__eq__`/`__hash__` come from the frozen dataclass. `__lt__` follows the OTS
+# subclass pattern: order same-type leaves by their fields, delegate cross-type
+# ordering to the base (which orders by TAG). OTS sorts attestations when it
+# serializes a Timestamp tree, so both cases must be well-defined.
+
+
 @dataclass(frozen=True)
 class ZeitwerkPendingAttestation(TimeAttestation):
-    """Submitted to zeitwerk but not yet anchored."""
+    """Submitted to zeitwerk but not yet anchored.
+
+    Payload: varuint(epoch_submit) + varbytes(recover_uri).
+
+    `recover_uri` is where a holder upgrades this receipt — the analogue of an
+    OTS calendar URL, but backed by /recover, so recovery works from
+    H(document) alone even if this receipt is lost.
+    """
 
     TAG = PENDING_TAG
 
@@ -80,7 +97,15 @@ class ZeitwerkPendingAttestation(TimeAttestation):
 
 @dataclass(frozen=True)
 class ZeitwerkAttestation(TimeAttestation):
-    """Anchored and self-verifying."""
+    """Anchored and self-verifying.
+
+    Payload: varuint(epoch) + uint8(anchor_type) + varbytes(anchor_ref).
+
+    `anchor_ref` is an opaque pointer the verifier resolves against the anchor
+    of `anchor_type` (e.g. an RFC 3161 token serial, or a transparency-log
+    index + tree size). Whether it *embeds* the proof or *references* the
+    published epoch set is an open design question — see issue #8.
+    """
 
     TAG = ANCHORED_TAG
 
