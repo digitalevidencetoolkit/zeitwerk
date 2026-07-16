@@ -1,4 +1,4 @@
-"""Round-trip tests for the zeitwerk attestation wire format and sidecar.
+"""Round-trip tests for the zeitwerk attestation wire format.
 
 Runs with the stdlib: `python3 -m unittest discover tests`.
 """
@@ -16,7 +16,6 @@ from zeitwerk.attestation import (
     deserialize_attestation,
     serialize_attestation,
 )
-from zeitwerk.sidecar import ReceiptSidecar
 
 from opentimestamps.core.notary import TimeAttestation, UnknownAttestation
 from opentimestamps.core.serialize import (
@@ -118,21 +117,6 @@ class OtsInteropTests(unittest.TestCase):
         stock = TimeAttestation.deserialize(BytesDeserializationContext(wire))
         self.assertIsInstance(stock, UnknownAttestation)
         self.assertEqual(stock.TAG, att.TAG)
-
-
-class SidecarTests(unittest.TestCase):
-    def test_json_round_trips(self):
-        sidecar = ReceiptSidecar(
-            doc_hash="sha256:1eb44d04",
-            op_path=[{"append": "77f7cc31"}, "sha256"],
-            epoch=12345,
-            merkle_root="abc123",
-            anchor={"type": "rfc3161-tsa", "serial": "42", "time": "2026-07-05T00:00:00Z"},
-            attestation_tag="005a454954414e43",
-            provenance={"Hardware": "iPhone", "Locale": "UA"},
-        )
-        restored = ReceiptSidecar.from_json(sidecar.to_json())
-        self.assertEqual(sidecar.to_dict(), restored.to_dict())
 
 
 if __name__ == "__main__":

@@ -23,7 +23,6 @@ from zeitwerk.attestation import (
     deserialize_attestation,
     serialize_attestation,
 )
-from zeitwerk.sidecar import ReceiptSidecar
 
 __all__ = [
     "AnchorType",
@@ -31,5 +30,4 @@ __all__ = [
     "ZeitwerkPendingAttestation",
     "deserialize_attestation",
     "serialize_attestation",
-    "ReceiptSidecar",
 ]
