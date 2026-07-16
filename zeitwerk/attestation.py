@@ -53,12 +53,29 @@ class ZeitwerkPendingAttestation(TimeAttestation):
     epoch_submit: int
     recover_uri: str
 
-    def _serialize_payload(self, ctx) -> None:
-        raise NotImplementedError  # TODO
+    def __post_init__(self) -> None:
+        PendingAttestation.check_uri(self.recover_uri.encode())
+
+    def __lt__(self, other: object) -> bool:
+        if other.__class__ is ZeitwerkPendingAttestation:
+            return (self.epoch_submit, self.recover_uri) < (
+                other.epoch_submit,
+                other.recover_uri,
+            )
+        return super().__lt__(other)
+
+    def _serialize_payload(self, ctx: BytesSerializationContext) -> None:
+        ctx.write_varuint(self.epoch_submit)
+        ctx.write_varbytes(self.recover_uri.encode())
 
     @classmethod
-    def deserialize(cls, ctx) -> "ZeitwerkPendingAttestation":
-        raise NotImplementedError  # TODO
+    def deserialize(cls, ctx: BytesDeserializationContext) -> "ZeitwerkPendingAttestation":
+        epoch_submit = ctx.read_varuint()
+        uri_bytes = ctx.read_varbytes(PendingAttestation.MAX_URI_LENGTH)
+        try:  # bad UTF-8 or a disallowed URI char must read as a wire error
+            return cls(epoch_submit=epoch_submit, recover_uri=uri_bytes.decode())
+        except ValueError as exc:
+            raise DeserializationError(f"invalid zeitwerk pending payload: {exc!r}") from exc
 
 
 @dataclass(frozen=True)
@@ -71,12 +88,37 @@ class ZeitwerkAttestation(TimeAttestation):
     anchor_type: AnchorType
     anchor_ref: bytes
 
-    def _serialize_payload(self, ctx) -> None:
-        raise NotImplementedError  # TODO
+    def __lt__(self, other: object) -> bool:
+        if other.__class__ is ZeitwerkAttestation:
+            return (self.epoch, self.anchor_type, self.anchor_ref) < (
+                other.epoch,
+                other.anchor_type,
+                other.anchor_ref,
+            )
+        return super().__lt__(other)
+
+    def _serialize_payload(self, ctx: BytesSerializationContext) -> None:
+        ctx.write_varuint(self.epoch)
+        ctx.write_uint8(int(self.anchor_type))
+        ctx.write_varbytes(self.anchor_ref)
 
     @classmethod
-    def deserialize(cls, ctx) -> "ZeitwerkAttestation":
-        raise NotImplementedError  # TODO
+    def deserialize(cls, ctx: BytesDeserializationContext) -> "ZeitwerkAttestation":
+        epoch = ctx.read_varuint()
+        try:  # a byte that isn't a defined AnchorType must read as a wire error
+            anchor_type = AnchorType(ctx.read_uint8())
+        except ValueError as exc:
+            raise DeserializationError(f"invalid zeitwerk anchor_type: {exc!r}") from exc
+        anchor_ref = ctx.read_varbytes(cls.MAX_PAYLOAD_SIZE)
+        return cls(epoch=epoch, anchor_type=anchor_type, anchor_ref=anchor_ref)
+
+
+# --- wire helpers ------------------------------------------------------------
+
+_REGISTRY = {
+    ZeitwerkPendingAttestation.TAG: ZeitwerkPendingAttestation,
+    ZeitwerkAttestation.TAG: ZeitwerkAttestation,
+}
 
 
 def serialize_attestation(att: TimeAttestation) -> bytes:
