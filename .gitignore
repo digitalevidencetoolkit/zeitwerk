@@ -12,3 +12,6 @@ venv/
 
 # Obsidian vault config (if notes/ or the repo is opened as a vault)
 .obsidian/
+
+# Docs kept out of git
+docs/
