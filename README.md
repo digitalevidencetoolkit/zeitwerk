@@ -9,6 +9,22 @@
 Timestamping in the spirit of OpenTimestamps, minus the Bitcoin anchor and minus
 the lose-your-receipt-lose-your-proof problem.
 
+## How it works, in plain words
+
+Zeitwerk never sees your documents — only 32-byte fingerprints (SHA-256
+hashes). During each epoch it collects fingerprints; at the close it sorts
+them into one list and hashes the list down to a single value, the *epoch
+root*. The root gets co-signed by independent institutions; the full list is
+published to public mirrors. Your receipt is the short trail from your
+fingerprint to that root, readable by ordinary OpenTimestamps tools.
+
+Lose the receipt and nothing is lost: the fingerprint plus the published
+list rebuilds it, byte for byte. See it happen:
+
+```
+python3 examples/lost_receipt_demo.py
+```
+
 ## Design commitments
 
 - Boring primitives only — SHA-256, Ed25519, JSON/CBOR.
