@@ -22,7 +22,9 @@ Lose the receipt and nothing is lost: the fingerprint plus the published
 list rebuilds it, byte for byte. See it happen:
 
 ```
-python3 examples/lost_receipt_demo.py
+make setup   # once: venv + vendored dependencies
+make demo    # the lost-receipt story, end to end
+make test    # the full suite, incl. the CI python -O pass
 ```
 
 ## Design commitments
