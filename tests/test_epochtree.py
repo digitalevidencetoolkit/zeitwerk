@@ -13,6 +13,10 @@ from zeitwerk.attestation import ZeitwerkPendingAttestation
 from zeitwerk.epochtree import (
     MAX_PROOF_LEVELS,
     build_epoch_tree,
+    decode_leaf_set,
+    encode_leaf_set,
+    verify_inclusion,
+    verify_non_inclusion,
     verify_receipt,
 )
 
@@ -200,6 +204,68 @@ class ReceiptTests(unittest.TestCase):
         branch = start.ops.add(OpAppend(b"\x11" * 32))  # second branch
         branch.attestations.add(_tip_attestation())
         self.assertFalse(verify_receipt(d, self._receipt(start, tip), tip.msg))
+
+
+class LeafSetTests(unittest.TestCase):
+    def test_encode_decode_round_trips(self):
+        tree = build_epoch_tree(_digests(5))
+        self.assertEqual(decode_leaf_set(encode_leaf_set(tree.leaves)), tree.leaves)
+
+    def test_encode_rejects_non_canonical_order(self):
+        ds = _digests(3)
+        with self.assertRaises(ValueError):
+            encode_leaf_set(tuple(reversed(sorted(ds))))
+
+    def test_decode_rejects_truncated_buffer(self):
+        buf = encode_leaf_set(build_epoch_tree(_digests(3)).leaves)
+        with self.assertRaises(ValueError):
+            decode_leaf_set(buf[:-1])
+
+    def test_decode_rejects_unsorted(self):
+        a, b = sorted(_digests(2))
+        with self.assertRaises(ValueError):
+            decode_leaf_set(b + a)
+
+    def test_decode_rejects_duplicates(self):
+        (a,) = _digests(1)
+        with self.assertRaises(ValueError):
+            decode_leaf_set(a + a)
+
+    def test_decode_rejects_empty(self):
+        with self.assertRaises(ValueError):
+            decode_leaf_set(b"")
+
+    def test_decode_rejects_non_bytes(self):
+        with self.assertRaises(TypeError):
+            decode_leaf_set("00" * 32)
+
+
+class StrictVerificationTests(unittest.TestCase):
+    def setUp(self):
+        self.ds = _digests(8)
+        self.tree = build_epoch_tree(self.ds)
+        self.buf = encode_leaf_set(self.tree.leaves)
+        self.absent = hashlib.sha256(b"absent").digest()
+
+    def test_present_digest_is_included(self):
+        self.assertTrue(verify_inclusion(self.ds[0], self.buf, self.tree.root))
+        self.assertFalse(verify_non_inclusion(self.ds[0], self.buf, self.tree.root))
+
+    def test_absent_digest_is_non_included(self):
+        self.assertFalse(verify_inclusion(self.absent, self.buf, self.tree.root))
+        self.assertTrue(verify_non_inclusion(self.absent, self.buf, self.tree.root))
+
+    def test_set_not_matching_root_fails_both_ways(self):
+        wrong = hashlib.sha256(b"wrong root").digest()
+        self.assertFalse(verify_inclusion(self.ds[0], self.buf, wrong))
+        self.assertFalse(verify_non_inclusion(self.absent, self.buf, wrong))
+
+    def test_tampered_set_fails_both_ways(self):
+        # Swap one leaf for another valid-looking digest, keep canonical order.
+        leaves = sorted([*self.tree.leaves[:-1], self.absent])
+        buf = encode_leaf_set(tuple(leaves))
+        self.assertFalse(verify_inclusion(self.ds[0], buf, self.tree.root))
+        self.assertFalse(verify_non_inclusion(self.absent, buf, self.tree.root))
 
 
 class StockOtsInteropTests(unittest.TestCase):
