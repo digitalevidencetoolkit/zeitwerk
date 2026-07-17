@@ -6,14 +6,20 @@
 
 ## What it is
 
-Timestamping in the spirit of OpenTimestamps, minus the Bitcoin anchor and minus
-the lose-your-receipt-lose-your-proof problem.
+Timestamping in the spirit of OpenTimestamps, minus the Bitcoin anchor and minus the lose-your-receipt-lose-your-proof problem.
+
+## How it works, in plain words
+
+Zeitwerk never sees your documents — only 32-byte fingerprints (SHA-256 hashes). During each epoch it collects fingerprints; at the close it sorts them into one list and hashes the list down to a single value, the *epoch
+root*. The root gets co-signed by (several) independent institutions, and the full list is published to public mirrors. Your receipt is the short trail from your fingerprint to that root, readable by ordinary OpenTimestamps tools.
+
+Lose the receipt and nothing is lost: the fingerprint plus the published list rebuilds it.
 
 ## Design commitments
 
 - Boring primitives only — SHA-256, Ed25519, JSON/CBOR.
 - Written spec; any verifier can be re-implemented from it.
-- Reads OpenTimestamps `.ots` proofs — a strict upgrade, not a fork.
+- Reads OpenTimestamps `.ots` proofs.
 - Exports RFC 3161 tokens for legal-adjacent consumers.
 - Offline-verifiable, forever.
 

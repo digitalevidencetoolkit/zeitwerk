@@ -23,11 +23,32 @@ from zeitwerk.attestation import (
     deserialize_attestation,
     serialize_attestation,
 )
+from zeitwerk.aggregator import Aggregator, ClosedEpoch
+from zeitwerk.epochtree import (
+    EpochTree,
+    build_epoch_tree,
+    decode_leaf_set,
+    encode_leaf_set,
+    recover_receipt,
+    verify_inclusion,
+    verify_non_inclusion,
+    verify_receipt,
+)
 
 __all__ = [
+    "Aggregator",
     "AnchorType",
+    "ClosedEpoch",
+    "EpochTree",
     "ZeitwerkAttestation",
     "ZeitwerkPendingAttestation",
+    "build_epoch_tree",
+    "decode_leaf_set",
     "deserialize_attestation",
+    "encode_leaf_set",
+    "recover_receipt",
     "serialize_attestation",
+    "verify_inclusion",
+    "verify_non_inclusion",
+    "verify_receipt",
 ]
