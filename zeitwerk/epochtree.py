@@ -14,10 +14,19 @@ disputes, audits — use the list.
 
 from __future__ import annotations
 
+from opentimestamps.core.op import OpAppend, OpPrepend, OpSHA256
+from opentimestamps.core.serialize import (
+    BytesDeserializationContext,
+    BytesSerializationContext,
+    DeserializationError,
+)
 from opentimestamps.core.timestamp import Timestamp, make_merkle_tree
 
 DIGEST_SIZE = 32
 MAX_LEAVES = 2**20  # bounds epoch memory and leaf-set decode (~33 MiB encoded)
+
+# An epoch of <= MAX_LEAVES leaves never merkles deeper than this.
+MAX_PROOF_LEVELS = MAX_LEAVES.bit_length()  # 21
 
 
 def check_digest(digest: bytes) -> None:
@@ -55,6 +64,17 @@ class EpochTree:
                 f"fingerprint is not in this epoch: {digest.hex()}"
             ) from None
 
+    def receipt_bytes(self, digest: bytes) -> bytes:
+        """The fingerprint's receipt serialized to OTS.
+
+        The tip must already carry the epoch's attestation(s) — a receipt
+        ends in an attestation, and the OTS format refuses to serialize one
+        that doesn't.
+        """
+        ctx = BytesSerializationContext()
+        self.proof(digest).serialize(ctx)
+        return ctx.getbytes()
+
 
 def build_epoch_tree(digests) -> EpochTree:
     """Sort the fingerprints into their canonical order, then merkle.
@@ -73,3 +93,45 @@ def build_epoch_tree(digests) -> EpochTree:
     stamps = {leaf: Timestamp(leaf) for leaf in leaves}
     tip = make_merkle_tree([stamps[leaf] for leaf in leaves])
     return EpochTree(tip.msg, leaves, stamps, tip)
+
+
+def verify_receipt(digest: bytes, receipt: bytes, root: bytes) -> bool:
+    """I hold a receipt — is it genuine for this fingerprint and root?
+
+    True if the receipt parses as an OTS timestamp whose hash trail leads
+    from `digest` to `root`. That proves the fingerprint existed before the
+    root was anchored — and nothing more; membership in the epoch is
+    verify_inclusion()'s job.
+    """
+    check_digest(digest)
+    check_digest(root)
+    if not isinstance(receipt, bytes):
+        raise TypeError(f"receipt must be bytes, got {type(receipt).__name__}")
+    try:
+        ctx = BytesDeserializationContext(receipt)
+        stamp = Timestamp.deserialize(ctx, digest)
+        ctx.assert_eof()
+    except DeserializationError:
+        return False
+    return _verify_chain(stamp, root)
+
+
+def _single_op(stamp: Timestamp):
+    """The node's only (op, child) — or (None, None) if it branches or ends."""
+    if len(stamp.ops) != 1:
+        return None, None
+    return next(iter(stamp.ops.items()))
+
+
+def _verify_chain(stamp: Timestamp, root: bytes) -> bool:
+    """Walk a parsed receipt, holding it to the canonical proof shape."""
+    for _ in range(MAX_PROOF_LEVELS + 1):
+        if stamp.msg == root:
+            return True
+        op, child = _single_op(stamp)
+        if type(op) not in (OpAppend, OpPrepend) or len(op[0]) != DIGEST_SIZE:
+            return False
+        op, stamp = _single_op(child)
+        if type(op) is not OpSHA256:
+            return False
+    return False
