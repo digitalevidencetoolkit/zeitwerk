@@ -2,9 +2,7 @@
 
 Run it:
 
-    python3 examples/lost_receipt_demo.py
-
-(Set up once with: pip install -e submodules/python-opentimestamps -e .)
+    make demo
 
 No network, no keys, no blockchain — just the epoch machinery, end to end.
 The anchor attestation is a stand-in until Stage 5 wires in the real
@@ -12,16 +10,26 @@ federation signatures.
 """
 
 import hashlib
+import sys
+from pathlib import Path
 
-from zeitwerk import (
-    Aggregator,
-    AnchorType,
-    ZeitwerkAttestation,
-    recover_receipt,
-    verify_inclusion,
-    verify_non_inclusion,
-    verify_receipt,
-)
+# Let the demo run uninstalled (the repo root isn't on sys.path in script mode).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+try:
+    from zeitwerk import (
+        Aggregator,
+        AnchorType,
+        ZeitwerkAttestation,
+        recover_receipt,
+        verify_inclusion,
+        verify_non_inclusion,
+        verify_receipt,
+    )
+except ModuleNotFoundError as exc:
+    raise SystemExit(
+        f"Missing dependency: {exc.name}. Run `make setup` once, then `make demo`."
+    ) from None
 
 EPOCH = 7
 
