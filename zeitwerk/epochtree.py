@@ -11,6 +11,13 @@ Because the same list always rebuilds the same tree, a lost receipt can
 be reconstructed, byte for byte, from a fingerprint plus the published
 list. Nobody has to keep anything.
 
+Which check do I use?
+
+    verify_receipt(digest, receipt, root)       I hold a receipt — genuine?
+    verify_inclusion(digest, set, root)         on epoch N's published list?
+    verify_non_inclusion(digest, set, root)     certainly NOT on the list?
+    recover_receipt(digest, set, *attestations) lost my receipt — rebuild it
+
 The fine print (it matters for disputes): fingerprints are
 submitter-chosen, so a genuine receipt can exist for a fingerprint that
 is *not* on the published list. A receipt proves the fingerprint existed
@@ -170,6 +177,30 @@ def verify_non_inclusion(digest: bytes, leaf_set_buf: bytes, root: bytes) -> boo
     if build_epoch_tree(leaves).root != root:
         return False
     return digest not in set(leaves)
+
+
+def recover_receipt(digest: bytes, leaf_set_buf: bytes, *attestations) -> bytes:
+    """Lost the receipt? Rebuild it from the published list — byte for byte.
+
+    Needs only the fingerprint, the epoch's published leaf set, and the
+    epoch's attestation(s) (also published, alongside the list). This is
+    the core of the /recover endpoint (Stage 4), and the reason zeitwerk
+    has no lose-your-receipt failure mode.
+    """
+    check_digest(digest)
+    if not attestations:
+        raise ValueError(
+            "at least one attestation is needed — a receipt ends in the "
+            "epoch's anchor, published next to the leaf set"
+        )
+    leaves = decode_leaf_set(leaf_set_buf)
+    if digest not in set(leaves):
+        raise ValueError(
+            f"fingerprint is not on this epoch's published list: {digest.hex()}"
+        )
+    tree = build_epoch_tree(leaves)
+    tree.tip.attestations.update(attestations)
+    return tree.receipt_bytes(digest)
 
 
 def verify_receipt(digest: bytes, receipt: bytes, root: bytes) -> bool:
