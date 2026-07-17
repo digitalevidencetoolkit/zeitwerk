@@ -15,6 +15,7 @@ from zeitwerk.epochtree import (
     build_epoch_tree,
     decode_leaf_set,
     encode_leaf_set,
+    recover_receipt,
     verify_inclusion,
     verify_non_inclusion,
     verify_receipt,
@@ -266,6 +267,34 @@ class StrictVerificationTests(unittest.TestCase):
         buf = encode_leaf_set(tuple(leaves))
         self.assertFalse(verify_inclusion(self.ds[0], buf, self.tree.root))
         self.assertFalse(verify_non_inclusion(self.absent, buf, self.tree.root))
+
+
+class RecoveryTests(unittest.TestCase):
+    def test_lost_receipt_rebuilds_byte_identical_from_published_set(self):
+        """The product claim: fingerprint + published list = the exact
+        receipt, byte for byte. This is /recover (Stage 4)."""
+        ds = _digests(9)
+        original = build_epoch_tree(ds)
+        original.tip.attestations.add(_tip_attestation())
+        published = encode_leaf_set(original.leaves)
+        receipt = original.receipt_bytes(ds[4])
+
+        # Receipt lost. All that survives: the digest and the published data.
+        recovered = recover_receipt(ds[4], published, _tip_attestation())
+        self.assertEqual(recovered, receipt)
+        self.assertTrue(verify_receipt(ds[4], recovered, original.root))
+
+    def test_recover_unknown_fingerprint_raises(self):
+        tree = build_epoch_tree(_digests(4))
+        buf = encode_leaf_set(tree.leaves)
+        with self.assertRaises(ValueError):
+            recover_receipt(hashlib.sha256(b"absent").digest(), buf, _tip_attestation())
+
+    def test_recover_without_attestation_raises(self):
+        tree = build_epoch_tree(_digests(4))
+        buf = encode_leaf_set(tree.leaves)
+        with self.assertRaises(ValueError):
+            recover_receipt(_digests(4)[0], buf)
 
 
 class StockOtsInteropTests(unittest.TestCase):

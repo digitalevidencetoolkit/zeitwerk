@@ -149,6 +149,29 @@ def verify_non_inclusion(digest: bytes, leaf_set_buf: bytes, root: bytes) -> boo
     return digest not in set(leaves)
 
 
+def recover_receipt(digest: bytes, leaf_set_buf: bytes, *attestations) -> bytes:
+    """Lost the receipt? Rebuild it from the published list — byte for byte.
+
+    Needs only the fingerprint, the epoch's published leaf set, and the
+    epoch's attestation(s) (also published, alongside the list). This is
+    the reason zeitwerk has no lose-your-receipt failure mode.
+    """
+    check_digest(digest)
+    if not attestations:
+        raise ValueError(
+            "at least one attestation is needed — a receipt ends in the "
+            "epoch's anchor, published next to the leaf set"
+        )
+    leaves = decode_leaf_set(leaf_set_buf)
+    if digest not in set(leaves):
+        raise ValueError(
+            f"fingerprint is not on this epoch's published list: {digest.hex()}"
+        )
+    tree = build_epoch_tree(leaves)
+    tree.tip.attestations.update(attestations)
+    return tree.receipt_bytes(digest)
+
+
 def verify_receipt(digest: bytes, receipt: bytes, root: bytes) -> bool:
     """I hold a receipt — is it genuine for this fingerprint and root?"""
     check_digest(digest)
