@@ -109,6 +109,69 @@ def build_epoch_tree(digests) -> EpochTree:
     return EpochTree(tip.msg, leaves, stamps, tip)
 
 
+def encode_leaf_set(leaves) -> bytes:
+    """The publishable form of an epoch: its sorted fingerprints, joined.
+
+    This byte string is what Stage 4 publishes to mirrors and what the
+    strict checks consume. `leaves` must already be canonical (as from
+    EpochTree.leaves).
+    """
+    buf = b"".join(leaves)
+    decoded = decode_leaf_set(buf)
+    if decoded != tuple(leaves):
+        raise ValueError("leaves are not in canonical form (sorted, no duplicates)")
+    return buf
+
+
+def decode_leaf_set(buf: bytes) -> tuple:
+    """Parse a published leaf set; canonical form or nothing."""
+    if not isinstance(buf, bytes):
+        raise TypeError(f"leaf set must be bytes, got {type(buf).__name__}")
+    if len(buf) > MAX_LEAVES * DIGEST_SIZE:
+        raise ValueError(f"leaf set too large: {len(buf)} bytes")
+    if len(buf) % DIGEST_SIZE != 0:
+        raise ValueError(
+            f"leaf set must be a whole number of {DIGEST_SIZE}-byte "
+            f"fingerprints, got {len(buf)} bytes"
+        )
+    leaves = tuple(buf[i : i + DIGEST_SIZE] for i in range(0, len(buf), DIGEST_SIZE))
+    if not leaves:
+        raise ValueError("leaf set is empty")
+    for a, b in zip(leaves, leaves[1:]):
+        if a >= b:  # catches both unsorted and duplicates
+            raise ValueError("leaf set is not in canonical order (sorted, no duplicates)")
+    return leaves
+
+
+def verify_inclusion(digest: bytes, leaf_set_buf: bytes, root: bytes) -> bool:
+    """Is this fingerprint on the epoch's published list?
+
+    True iff the list is canonical, recomputes to `root`, and contains
+    `digest`. This — not a receipt — is what "timestamped in epoch N"
+    means; see the module docstring's fine print.
+    """
+    check_digest(digest)
+    check_digest(root)
+    leaves = decode_leaf_set(leaf_set_buf)
+    if build_epoch_tree(leaves).root != root:
+        return False
+    return digest in set(leaves)
+
+
+def verify_non_inclusion(digest: bytes, leaf_set_buf: bytes, root: bytes) -> bool:
+    """Is this fingerprint certainly NOT on the epoch's published list?
+
+    Same rules inverted; both checks fail on a list that doesn't recompute
+    to `root`, so a tampered list proves nothing either way.
+    """
+    check_digest(digest)
+    check_digest(root)
+    leaves = decode_leaf_set(leaf_set_buf)
+    if build_epoch_tree(leaves).root != root:
+        return False
+    return digest not in set(leaves)
+
+
 def verify_receipt(digest: bytes, receipt: bytes, root: bytes) -> bool:
     """I hold a receipt — is it genuine for this fingerprint and root?
 

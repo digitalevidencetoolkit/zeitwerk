@@ -13,6 +13,10 @@ from zeitwerk.attestation import ZeitwerkPendingAttestation
 from zeitwerk.epochtree import (
     MAX_PROOF_LEVELS,
     build_epoch_tree,
+    decode_leaf_set,
+    encode_leaf_set,
+    verify_inclusion,
+    verify_non_inclusion,
     verify_receipt,
 )
 
@@ -202,6 +206,95 @@ class ReceiptTests(unittest.TestCase):
         branch = start.ops.add(OpAppend(b"\x11" * 32))  # second branch
         branch.attestations.add(_tip_attestation())
         self.assertFalse(verify_receipt(d, self._receipt(start, tip), tip.msg))
+
+
+class LeafSetTests(unittest.TestCase):
+    def test_encode_decode_round_trips(self):
+        tree = build_epoch_tree(_digests(5))
+        self.assertEqual(decode_leaf_set(encode_leaf_set(tree.leaves)), tree.leaves)
+
+    def test_encode_rejects_non_canonical_order(self):
+        ds = _digests(3)
+        with self.assertRaises(ValueError):
+            encode_leaf_set(tuple(reversed(sorted(ds))))
+
+    def test_decode_rejects_truncated_buffer(self):
+        buf = encode_leaf_set(build_epoch_tree(_digests(3)).leaves)
+        with self.assertRaises(ValueError):
+            decode_leaf_set(buf[:-1])
+
+    def test_decode_rejects_unsorted(self):
+        a, b = sorted(_digests(2))
+        with self.assertRaises(ValueError):
+            decode_leaf_set(b + a)
+
+    def test_decode_rejects_duplicates(self):
+        (a,) = _digests(1)
+        with self.assertRaises(ValueError):
+            decode_leaf_set(a + a)
+
+    def test_decode_rejects_empty(self):
+        with self.assertRaises(ValueError):
+            decode_leaf_set(b"")
+
+    def test_decode_rejects_non_bytes(self):
+        with self.assertRaises(TypeError):
+            decode_leaf_set("00" * 32)
+
+
+class StrictVerificationTests(unittest.TestCase):
+    def setUp(self):
+        self.ds = _digests(8)
+        self.tree = build_epoch_tree(self.ds)
+        self.buf = encode_leaf_set(self.tree.leaves)
+        self.absent = hashlib.sha256(b"absent").digest()
+
+    def test_present_digest_is_included(self):
+        self.assertTrue(verify_inclusion(self.ds[0], self.buf, self.tree.root))
+        self.assertFalse(verify_non_inclusion(self.ds[0], self.buf, self.tree.root))
+
+    def test_absent_digest_is_non_included(self):
+        self.assertFalse(verify_inclusion(self.absent, self.buf, self.tree.root))
+        self.assertTrue(verify_non_inclusion(self.absent, self.buf, self.tree.root))
+
+    def test_set_not_matching_root_fails_both_ways(self):
+        wrong = hashlib.sha256(b"wrong root").digest()
+        self.assertFalse(verify_inclusion(self.ds[0], self.buf, wrong))
+        self.assertFalse(verify_non_inclusion(self.absent, self.buf, wrong))
+
+    def test_tampered_set_fails_both_ways(self):
+        # Swap one leaf for another valid-looking digest, keep canonical order.
+        leaves = sorted([*self.tree.leaves[:-1], self.absent])
+        buf = encode_leaf_set(tuple(leaves))
+        self.assertFalse(verify_inclusion(self.ds[0], buf, self.tree.root))
+        self.assertFalse(verify_non_inclusion(self.absent, buf, self.tree.root))
+
+    def test_chain_extension_attack_passes_existence_fails_inclusion(self):
+        """The module docstring's fine print, as a test.
+
+        Fingerprints are submitter-chosen: submit X = SHA256(L' + junk) and
+        you can later exhibit a genuine receipt for L' although L' is not
+        on the list. The receipt honestly proves L' existed before the root
+        — but inclusion means list membership, and only list membership.
+        """
+        l_prime = hashlib.sha256(b"the attacker's real document").digest()
+        junk = b"\xaa" * 32
+        x = hashlib.sha256(l_prime + junk).digest()
+
+        tree = build_epoch_tree([x, *self.ds])
+        tree.tip.attestations.add(_tip_attestation())
+        buf = encode_leaf_set(tree.leaves)
+
+        # Extension chain: L' -> append junk -> sha256 -> X, then X's chain.
+        chain = Timestamp(l_prime)
+        chain.ops.add(OpAppend(junk)).ops.add(OpSHA256()).merge(tree.proof(x))
+        ctx = BytesSerializationContext()
+        chain.serialize(ctx)
+        receipt = ctx.getbytes()
+
+        self.assertTrue(verify_receipt(l_prime, receipt, tree.root))
+        self.assertFalse(verify_inclusion(l_prime, buf, tree.root))
+        self.assertTrue(verify_non_inclusion(l_prime, buf, tree.root))
 
 
 class StockOtsInteropTests(unittest.TestCase):
