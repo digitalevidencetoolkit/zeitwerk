@@ -6,8 +6,19 @@ build-backend = "setuptools.build_meta"
 name = "zeitwerk"
 version = "0.1.0"
 description = "RFC 3161-spirited timestamping with OpenTimestamps-compatible receipts"
+readme = "README.md"
 requires-python = ">=3.11"
+authors = [{ name = "Basile Simon", email = "basile@digitalevidencetoolkit.org" }]
 dependencies = ["opentimestamps"]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.urls]
+Homepage = "https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/"
+Repository = "https://github.com/digitalevidencetoolkit/zeitwerk"
 
 [tool.setuptools]
 packages = ["zeitwerk"]
