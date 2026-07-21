@@ -23,10 +23,21 @@ Lose the receipt and nothing is lost: the fingerprint plus the published list re
 - Exports RFC 3161 tokens for legal-adjacent consumers.
 - Offline-verifiable, forever.
 
+## Quickstart
+
+Everything runs on the standard library plus the vendored `python-opentimestamps`
+submodule; each step is one `make` target:
+
+```sh
+make setup   # create the venv + install dependencies (idempotent)
+make test    # run the full suite, incl. the CI python -O pass
+make build   # build an sdist + wheel into dist/
+```
+
 ---
 
 See also: https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/
 
-[Zeitwerk](/tools/zeitwerk-timestamping/) is funded by the Federal Ministry of Education and Research under grant number 16IS26S28, administered through the Prototype Fund.
+[Zeitwerk](https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/) is funded by the Federal Ministry of Education and Research under grant number 16IS26S28, administered through the Prototype Fund.
 
 <img src="https://digitalevidencetoolkit.org/images/logo-bmbf.svg" alt="BMBF logo" width="200px"> <img src="https://digitalevidencetoolkit.org/images/logo-okfn.svg" alt="OKFN logo" width="200px">
