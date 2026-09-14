@@ -68,6 +68,10 @@ class Aggregator:
 
     Duplicate submissions of one fingerprint collapse to one leaf; every
     submitter of that fingerprint gets the identical receipt.
+
+    `epoch` is clock-derived — `floor(unix_timestamp / 3600)` — so it names an
+    hour rather than counting closures. Nothing here computes it: the caller
+    assigns it when it accepts the submission.
     """
 
     def __init__(self, epoch: int, max_leaves: int = MAX_LEAVES):

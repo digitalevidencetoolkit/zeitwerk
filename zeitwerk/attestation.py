@@ -60,6 +60,11 @@ class ZeitwerkPendingAttestation(TimeAttestation):
 
     Payload: varuint(epoch_submit) + varbytes(recover_uri).
 
+    `epoch_submit` is the epoch this submission was accepted into, derived from
+    the clock: `floor(unix_timestamp / 3600)`. It is an address, not a counter —
+    it tells a holder which published leaf set will carry this fingerprint once
+    the epoch closes.
+
     `recover_uri` is where a holder upgrades this receipt — the analogue of an
     OTS calendar URL, but backed by /recover, so recovery works from
     H(document) alone even if this receipt is lost.
@@ -100,6 +105,14 @@ class ZeitwerkAttestation(TimeAttestation):
     """Anchored and self-verifying.
 
     Payload: varuint(epoch) + uint8(anchor_type) + varbytes(anchor_ref).
+
+    `epoch` is derived from the clock, not counted:
+    `floor(unix_timestamp / 3600)`, so epoch N covers
+    `[N * 3600, (N+1) * 3600)` and epoch 0 is 1970-01-01 00:00-01:00 UTC.
+    A verifier can therefore read the stamping hour straight off the payload,
+    and locate the published leaf set without asking anyone. Note the cadence
+    is fixed by this encoding: moving off hourly needs a new tag, not a new
+    configuration.
 
     `anchor_ref` is an opaque pointer the verifier resolves against the anchor
     of `anchor_type` (e.g. an RFC 3161 token serial, or a transparency-log
