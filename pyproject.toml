@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,8 @@ name = "zeitwerk"
 version = "0.1.0"
 description = "RFC 3161-spirited timestamping with OpenTimestamps-compatible receipts"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "Basile Simon", email = "basile@digitalevidencetoolkit.org" }]
 dependencies = ["opentimestamps"]
