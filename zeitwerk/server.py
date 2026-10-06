@@ -14,7 +14,6 @@ Every route answers 501 for now; the witness behind them comes later.
 from __future__ import annotations
 
 import argparse
-import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
@@ -52,9 +51,9 @@ class Handler(BaseHTTPRequestHandler):
         self._reply(501, "Not implemented")
 
     def _reply(self, status: int, text: str) -> None:
-        body = json.dumps({"error": text}).encode()
+        body = text.encode()
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", "text/plain")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
