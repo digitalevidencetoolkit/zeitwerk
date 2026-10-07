@@ -14,7 +14,7 @@ Every route answers 501 for now; the witness behind them comes later.
 from __future__ import annotations
 
 import argparse
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlsplit
 
 DEFAULT_HOST = "127.0.0.1"
@@ -62,8 +62,8 @@ class Handler(BaseHTTPRequestHandler):
         """Log nothing: no client IPs are collected."""
 
 
-def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> ThreadingHTTPServer:
-    return ThreadingHTTPServer((host, port), Handler)
+def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> HTTPServer:
+    return HTTPServer((host, port), Handler)
 
 
 def main(argv=None) -> None:
