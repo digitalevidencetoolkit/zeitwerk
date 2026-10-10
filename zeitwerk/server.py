@@ -8,12 +8,11 @@ Same URL shape as an OpenTimestamps calendar, on the stdlib `http.server`:
 
 Every route answers 501 for now; the witness behind them comes later.
 
-    python -m zeitwerk.server [--host HOST] [--port PORT]
+    python -m zeitwerk.server
 """
 
 from __future__ import annotations
 
-import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
@@ -66,13 +65,9 @@ def make_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> Threading
     return ThreadingHTTPServer((host, port), Handler)
 
 
-def main(argv=None) -> None:
-    parser = argparse.ArgumentParser(description="zeitwerk witness server (stub)")
-    parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    args = parser.parse_args(argv)
-    server = make_server(args.host, args.port)
-    print(f"zeitwerk witness (stub) on http://{args.host}:{args.port}")
+def main() -> None:
+    server = make_server()
+    print(f"zeitwerk witness (stub) on http://{DEFAULT_HOST}:{DEFAULT_PORT}")
     server.serve_forever()
 
 
