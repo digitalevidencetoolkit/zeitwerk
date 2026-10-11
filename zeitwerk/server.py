@@ -14,7 +14,6 @@ Every route answers 501 for now; the witness behind them comes later.
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 14788
@@ -22,17 +21,15 @@ DEFAULT_PORT = 14788
 
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        path = urlsplit(self.path).path
-        if path == "/digest":
+        if self.path == "/digest":
             self.post_digest()
         else:
             self._reply(404, "Not found")
 
     def do_GET(self):
-        path = urlsplit(self.path).path
-        if path.startswith("/timestamp/"):
-            self.get_timestamp(path[len("/timestamp/") :])
-        elif path == "/key":
+        if self.path.startswith("/timestamp/"):
+            self.get_timestamp(self.path[len("/timestamp/") :])
+        elif self.path == "/key":
             self.get_key()
         else:
             self._reply(404, "Not found")
