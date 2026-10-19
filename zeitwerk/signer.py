@@ -57,3 +57,20 @@ class Signer:
         """Sign an epoch root: b'zeitwerk-v0' + epoch + root + key_id."""
         message = V0_PREFIX + epoch.to_bytes(8, "big") + root + self.key_id
         return self._private_key.sign(message)
+
+    @staticmethod
+    def verify(
+        public_key: bytes, epoch: int, root: bytes, key_id: bytes, signature: bytes
+    ) -> bool:
+        """Verify a v0 signature. public_key must be 32 raw bytes."""
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PublicKey,
+        )
+
+        pk = Ed25519PublicKey.from_public_bytes(public_key)
+        message = V0_PREFIX + epoch.to_bytes(8, "big") + root + key_id
+        try:
+            pk.verify(signature, message)
+            return True
+        except Exception:
+            return False

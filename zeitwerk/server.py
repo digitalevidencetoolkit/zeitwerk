@@ -4,10 +4,10 @@ Same URL shape as an OpenTimestamps calendar, on the stdlib `http.server`:
 
     POST /digest            32 raw bytes in, pending receipt out
     GET  /timestamp/<hex>   the upgraded receipt, or 404 while pending
-    GET  /key               the signer's public key
+    GET  /key               the signer's raw Ed25519 public key
 
 For now submissions just sit in a set in memory, so a restart forgets them
-(the SQLite store will fix that). `GET /key` says 501 until there's a signer.
+(the SQLite store will fix that).
 
     python -m zeitwerk.server
 """
@@ -18,6 +18,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from zeitwerk.epochtree import DIGEST_SIZE, check_digest
+from zeitwerk.signer import Signer
 from zeitwerk.witness import EPOCH_SECONDS, pending_receipt
 
 DEFAULT_HOST = "127.0.0.1"
@@ -66,7 +67,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def get_key(self):
         """Return the signer's raw Ed25519 public key."""
-        self._reply(501, "Not implemented")
+        self._reply(200, self.server.signer.public_key, "application/octet-stream")
 
     def _reply(self, status: int, body: str | bytes, content_type: str = "text/plain") -> None:
         if isinstance(body, str):
@@ -89,6 +90,7 @@ def make_server(
     # Hung on the server so the handlers can get at them via self.server.
     server.now = now
     server.submitted = set()
+    server.signer = Signer()
     return server
 
 
