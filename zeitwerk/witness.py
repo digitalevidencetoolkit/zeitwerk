@@ -5,7 +5,7 @@ Only the pending receipt so far — sealing and signing come next.
 
 from __future__ import annotations
 
-from opentimestamps.core.serialize import BytesSerializationContext
+from opentimestamps.core.serialize import BytesDeserializationContext, BytesSerializationContext
 from opentimestamps.core.timestamp import Timestamp
 
 from zeitwerk.attestation import ZeitwerkPendingAttestation
@@ -23,3 +23,11 @@ def pending_receipt(digest: bytes, epoch: int, recover_uri: str) -> bytes:
     ctx = BytesSerializationContext()
     stamp.serialize(ctx)
     return ctx.getbytes()
+
+
+def verify_signed_receipt(digest: bytes, receipt: bytes, pubkey: bytes) -> bool:
+    """Verify a signed receipt offline with only the public key (issue #17).
+    
+    Follows the receipt to its root and checks the signature.
+    """
+    raise NotImplementedError("verify_signed_receipt: not implemented yet")
