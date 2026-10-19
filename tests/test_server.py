@@ -75,8 +75,10 @@ class ServerTests(unittest.TestCase):
     def test_get_timestamp_is_not_found_when_never_submitted(self):
         self.assertEqual(self._request("GET", "/timestamp/" + "04" * 32), (404, b"Not found"))
 
-    def test_get_key_is_not_implemented(self):
-        self.assertEqual(self._status("GET", "/key"), 501)
+    def test_get_key_returns_public_key(self):
+        status, body = self._request("GET", "/key")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body), 32)  # Ed25519 public key is 32 bytes
 
     def test_unknown_path_is_404(self):
         self.assertEqual(self._status("GET", "/nope"), 404)
