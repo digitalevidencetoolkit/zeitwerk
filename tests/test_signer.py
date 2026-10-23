@@ -50,6 +50,12 @@ class SignerTests(unittest.TestCase):
             )
         )
 
+    def test_misused_verify_raises(self):
+        """A caller bug (no signature at all) raises, rather than reading as a bad signature."""
+        signer = Signer()
+        with self.assertRaises(TypeError):
+            Signer.verify(signer.public_key, 42, b"\x00" * 32, signer.key_id, None)
+
     def test_key_id_is_first_8_sha256_bytes(self):
         """key_id is first 8 bytes of SHA-256(public_key)."""
         import hashlib

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
@@ -73,5 +74,5 @@ class Signer:
         try:
             pk.verify(signature, message)
             return True
-        except Exception:
+        except InvalidSignature:
             return False
