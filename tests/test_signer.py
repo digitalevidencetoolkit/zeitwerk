@@ -68,6 +68,21 @@ class SignerTests(unittest.TestCase):
         signer = Signer()
         self.assertEqual(len(signer.key_id), 8)
 
+    def test_key_file_survives_restart(self):
+        """A key written on first run is loaded back, so old signatures still verify."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            key_path = Path(tmp) / "witness.pem"
+            sig = Signer(key_path).sign(42, b"\x00" * 32)
+            restarted = Signer(key_path)
+            self.assertTrue(
+                Signer.verify(
+                    restarted.public_key, 42, b"\x00" * 32, restarted.key_id, sig
+                )
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

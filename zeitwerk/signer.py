@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     NoEncryption,
+    PrivateFormat,
     PublicFormat,
     load_pem_private_key,
 )
@@ -36,7 +37,7 @@ class Signer:
                 key_path.write_bytes(
                     self._private_key.private_bytes(
                         Encoding.PEM,
-                        PublicFormat.PKCS8,
+                        PrivateFormat.PKCS8,
                         NoEncryption(),
                     )
                 )
