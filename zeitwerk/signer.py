@@ -18,6 +18,11 @@ from cryptography.hazmat.primitives.serialization import (
 V0_PREFIX = b"zeitwerk-v0"
 
 
+def key_id_of(public_key: bytes) -> bytes:
+    """First 8 bytes of SHA-256(public_key)."""
+    return hashlib.sha256(public_key).digest()[:8]
+
+
 class Signer:
     """Single Ed25519 signer for epoch roots.
 
@@ -53,7 +58,7 @@ class Signer:
     @property
     def key_id(self) -> bytes:
         """First 8 bytes of SHA-256(public_key)."""
-        return hashlib.sha256(self.public_key).digest()[:8]
+        return key_id_of(self.public_key)
 
     def sign(self, epoch: int, root: bytes) -> bytes:
         """Sign an epoch root: b'zeitwerk-v0' + epoch + root + key_id."""

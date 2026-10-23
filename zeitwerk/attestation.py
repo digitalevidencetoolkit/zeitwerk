@@ -44,6 +44,7 @@ class AnchorType(IntEnum):
     TSA_RFC3161 = 0  # centralized signed timestamp (simplest)
     FEDERATED_COSIGN = 1  # N-of-M independent signers
     TRANSPARENCY_LOG = 2  # transparency log with external witnesses
+    WITNESS_ED25519 = 3  # one witness's signature; anchor_ref = key_id (8) ‖ signature (64)
 
 
 # --- attestation leaves ------------------------------------------------------

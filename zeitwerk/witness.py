@@ -1,17 +1,31 @@
 """The witness behind the HTTP routes (issue #17).
 
-Only the pending receipt so far — sealing and signing come next.
+The pending receipt, the signed attestation the hourly close will hang on an
+epoch's tip, and the offline check of a signed receipt. Sealing comes next.
 """
 
 from __future__ import annotations
 
-from opentimestamps.core.serialize import BytesDeserializationContext, BytesSerializationContext
+from opentimestamps.core.serialize import (
+    BytesDeserializationContext,
+    BytesSerializationContext,
+    DeserializationError,
+)
 from opentimestamps.core.timestamp import Timestamp
 
-from zeitwerk.attestation import ZeitwerkPendingAttestation
-from zeitwerk.epochtree import check_digest
+from zeitwerk.attestation import (
+    AnchorType,
+    ZeitwerkAttestation,
+    ZeitwerkPendingAttestation,
+    deserialize_attestation,
+    serialize_attestation,
+)
+from zeitwerk.epochtree import check_digest, verify_receipt
+from zeitwerk.signer import Signer, key_id_of
 
 EPOCH_SECONDS = 3600
+KEY_ID_SIZE = 8
+SIGNATURE_SIZE = 64
 
 
 def pending_receipt(digest: bytes, epoch: int, recover_uri: str) -> bytes:
@@ -25,9 +39,41 @@ def pending_receipt(digest: bytes, epoch: int, recover_uri: str) -> bytes:
     return ctx.getbytes()
 
 
+def signed_attestation(signer: Signer, epoch: int, root: bytes) -> ZeitwerkAttestation:
+    """What the hourly close hangs on the epoch's tip."""
+    return ZeitwerkAttestation(
+        epoch=epoch,
+        anchor_type=AnchorType.WITNESS_ED25519,
+        anchor_ref=signer.key_id + signer.sign(epoch, root),
+    )
+
+
 def verify_signed_receipt(digest: bytes, receipt: bytes, pubkey: bytes) -> bool:
     """Verify a signed receipt offline with only the public key (issue #17).
-    
-    Follows the receipt to its root and checks the signature.
+
+    The root isn't stored in the attestation: it's the receipt node the
+    attestation hangs on. The signature covers it, along with the epoch.
     """
-    raise NotImplementedError("verify_signed_receipt: not implemented yet")
+    check_digest(digest)
+    key_id = key_id_of(pubkey)
+    try:
+        stamp = Timestamp.deserialize(BytesDeserializationContext(receipt), digest)
+    except DeserializationError:
+        return False
+    for root, unknown in stamp.all_attestations():
+        try:  # stock OTS parses our tag as UnknownAttestation
+            att = deserialize_attestation(serialize_attestation(unknown))
+        except DeserializationError:
+            continue
+        # Signature before verify_receipt: that one raises on a root that
+        # isn't 32 bytes, and the witness only ever signs 32-byte roots.
+        if (
+            type(att) is ZeitwerkAttestation
+            and att.anchor_type is AnchorType.WITNESS_ED25519
+            and len(att.anchor_ref) == KEY_ID_SIZE + SIGNATURE_SIZE
+            and att.anchor_ref[:KEY_ID_SIZE] == key_id
+            and Signer.verify(pubkey, att.epoch, root, key_id, att.anchor_ref[KEY_ID_SIZE:])
+            and verify_receipt(digest, receipt, root)
+        ):
+            return True
+    return False
