@@ -174,13 +174,15 @@ class Store:
         with self._lock:
             cursor = self._conn.cursor()
             try:
-                # Check that epoch exists and is closed (has leaf_set)
+                # Check that epoch is closed (has a row) and not yet sealed
                 cursor.execute(
-                    "SELECT leaf_set FROM epochs WHERE epoch = ?", (epoch,)
+                    "SELECT attestation FROM epochs WHERE epoch = ?", (epoch,)
                 )
                 row = cursor.fetchone()
                 if row is None:
                     raise ValueError(f"epoch {epoch} has not been closed yet")
+                if row[0] is not None:
+                    raise ValueError(f"epoch {epoch} is already sealed")
                 
                 # Update with root and attestation
                 cursor.execute(
