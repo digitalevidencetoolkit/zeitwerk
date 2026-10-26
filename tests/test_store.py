@@ -46,8 +46,8 @@ class StoreSubmissionTests(unittest.TestCase):
     def test_add_submission_same_digest_different_epoch_stores_twice(self):
         self.store.add_submission(DIGEST, EPOCH)
         self.store.add_submission(DIGEST, EPOCH2)
-        # Both should be stored
-        self.assertTrue(self.store.is_submitted(DIGEST))
+        self.assertEqual(self.store.close_epoch(EPOCH), DIGEST)
+        self.assertEqual(self.store.close_epoch(EPOCH2), DIGEST)
 
     def test_is_submitted_returns_false_for_unknown_digest(self):
         self.assertFalse(self.store.is_submitted(DIGEST))
@@ -141,15 +141,12 @@ class StoreEpochTests(unittest.TestCase):
         leaf_set = self.store.close_epoch(EPOCH)
         self.assertEqual(leaf_set, DIGEST)  # Only one copy
 
-    def test_seal_epoch_stores_root_and_attestation(self):
+    def test_seal_epoch_twice_raises(self):
         self.store.add_submission(DIGEST, EPOCH)
         self.store.close_epoch(EPOCH)
-        root = b"\x03" * 32
-        attestation = b"attestation bytes"
-        self.store.seal_epoch(EPOCH, root, attestation)
-        # Verify by closing again (should not change)
-        leaf_set = self.store.close_epoch(EPOCH)
-        self.assertEqual(leaf_set, DIGEST)
+        self.store.seal_epoch(EPOCH, b"\x03" * 32, b"attestation bytes")
+        with self.assertRaises(ValueError):
+            self.store.seal_epoch(EPOCH, b"\x04" * 32, b"other bytes")
 
     def test_seal_epoch_requires_closed_epoch(self):
         with self.assertRaises(ValueError):
