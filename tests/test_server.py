@@ -4,6 +4,7 @@ Runs with the stdlib: `python3 -m unittest discover tests`.
 """
 
 import http.client
+import tempfile
 import threading
 import unittest
 
@@ -16,26 +17,42 @@ from zeitwerk.server import RECOVER_URI, make_server
 FAKE_NOW = 7 * 3600 + 12  # 07:00:12 UTC on 1 January 1970, so epoch 7
 
 
+def start(data_dir):
+    server = make_server(data_dir, port=0, now=lambda: FAKE_NOW)
+    # A short poll so shutdown() doesn't wait half a second each restart.
+    threading.Thread(target=server.serve_forever, args=(0.01,), daemon=True).start()
+    return server
+
+
+def stop(server):
+    server.shutdown()
+    server.server_close()
+    server.store.close()
+
+
+def request(server, method, path, body=None):
+    conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1])
+    try:
+        conn.request(method, path, body=body)
+        resp = conn.getresponse()
+        return resp.status, resp.read()
+    finally:
+        conn.close()
+
+
 class ServerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.server = make_server(port=0, now=lambda: FAKE_NOW)
-        cls.port = cls.server.server_address[1]
-        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.server = start(cls.tmp.name)
 
     @classmethod
     def tearDownClass(cls):
-        cls.server.shutdown()
-        cls.server.server_close()
+        stop(cls.server)
+        cls.tmp.cleanup()
 
     def _request(self, method, path, body=None):
-        conn = http.client.HTTPConnection("127.0.0.1", self.port)
-        try:
-            conn.request(method, path, body=body)
-            resp = conn.getresponse()
-            return resp.status, resp.read()
-        finally:
-            conn.close()
+        return request(self.server, method, path, body)
 
     def _status(self, method, path, body=None):
         return self._request(method, path, body)[0]
@@ -82,6 +99,34 @@ class ServerTests(unittest.TestCase):
 
     def test_unknown_path_is_404(self):
         self.assertEqual(self._status("GET", "/nope"), 404)
+
+
+class ServerRestartTests(unittest.TestCase):
+    """A restart on the same data directory loses nothing."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.data_dir = tmp.name
+
+    def _restart(self, server):
+        stop(server)
+        server = start(self.data_dir)
+        self.addCleanup(stop, server)
+        return server
+
+    def test_a_submission_is_still_pending_after_a_restart(self):
+        digest = b"\x05" * 32
+        server = start(self.data_dir)
+        request(server, "POST", "/digest", digest)
+        server = self._restart(server)
+        self.assertEqual(request(server, "GET", "/timestamp/" + digest.hex()), (404, b"Pending"))
+
+    def test_the_key_is_the_same_after_a_restart(self):
+        server = start(self.data_dir)
+        before = request(server, "GET", "/key")
+        server = self._restart(server)
+        self.assertEqual(request(server, "GET", "/key"), before)
 
 
 if __name__ == "__main__":
