@@ -21,7 +21,13 @@ from zeitwerk.attestation import (
     deserialize_attestation,
     serialize_attestation,
 )
-from zeitwerk.epochtree import build_epoch_tree, check_digest, decode_leaf_set, verify_receipt
+from zeitwerk.epochtree import (
+    build_epoch_tree,
+    check_digest,
+    decode_leaf_set,
+    recover_receipt,
+    verify_receipt,
+)
 from zeitwerk.signer import Signer, key_id_of
 from zeitwerk.store import Store
 
@@ -75,7 +81,11 @@ def upgraded_receipt(store: Store, digest: bytes) -> bytes | None:
     Rebuilt by recover_receipt from the leaf set and attestation, never
     stored: the bytes are the same ones /recover and the published list give.
     """
-    raise NotImplementedError
+    sealed = store.sealed_for(digest)
+    if sealed is None:
+        return None
+    leaf_set, attestation = sealed
+    return recover_receipt(digest, leaf_set, deserialize_attestation(attestation))
 
 
 def verify_signed_receipt(digest: bytes, receipt: bytes, pubkey: bytes) -> bool:

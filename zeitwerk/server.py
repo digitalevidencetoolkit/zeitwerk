@@ -22,7 +22,7 @@ from pathlib import Path
 from zeitwerk.epochtree import DIGEST_SIZE, check_digest
 from zeitwerk.signer import Signer
 from zeitwerk.store import EpochClosed, EpochFull, Store
-from zeitwerk.witness import EPOCH_SECONDS, pending_receipt
+from zeitwerk.witness import EPOCH_SECONDS, pending_receipt, upgraded_receipt
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 14788
@@ -71,7 +71,9 @@ class Handler(BaseHTTPRequestHandler):
             check_digest(digest)
         except ValueError:
             return self._reply(400, "Expected a 64-character hex digest")
-        # Nothing gets upgraded yet: next, a 200 with witness.upgraded_receipt.
+        receipt = upgraded_receipt(self.server.store, digest)
+        if receipt is not None:
+            return self._reply(200, receipt, "application/octet-stream")
         self._reply(404, "Pending" if self.server.store.is_submitted(digest) else "Not found")
 
     def get_key(self):

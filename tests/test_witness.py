@@ -14,6 +14,7 @@ from zeitwerk.witness import (
     close_due,
     pending_receipt,
     signed_attestation,
+    upgraded_receipt,
     verify_signed_receipt,
 )
 
@@ -122,6 +123,39 @@ class CloseDueTests(unittest.TestCase):
         leaf_set, attestation = self.store.sealed_for(self.digests[0])
         receipt = recover_receipt(self.digests[0], leaf_set, deserialize_attestation(attestation))
         self.assertTrue(verify_signed_receipt(self.digests[0], receipt, self.signer.public_key))
+
+
+class UpgradedReceiptTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.addCleanup(self.store.close)
+        self.signer = Signer()
+        self.digests = _digests(3)
+        for digest in self.digests:
+            self.store.add_submission(digest, EPOCH)
+
+    def test_unknown_digest_is_none(self):
+        self.assertIsNone(upgraded_receipt(self.store, b"\xff" * 32))
+
+    def test_pending_digest_is_none(self):
+        self.assertIsNone(upgraded_receipt(self.store, self.digests[0]))
+
+    def test_sealed_receipt_verifies_against_the_key(self):
+        close_due(self.store, self.signer, _hour(EPOCH + 1))
+        receipt = upgraded_receipt(self.store, self.digests[0])
+        self.assertTrue(verify_signed_receipt(self.digests[0], receipt, self.signer.public_key))
+
+    def test_same_bytes_as_rebuilt_from_the_published_list(self):
+        """GET /timestamp, /recover and the published list all give one receipt.
+
+        Ed25519 signatures are deterministic, so signing the root again here
+        gives the very attestation the closer stored.
+        """
+        close_due(self.store, self.signer, _hour(EPOCH + 1))
+        tree = build_epoch_tree(self.digests)
+        attestation = signed_attestation(self.signer, EPOCH, tree.root)
+        published = recover_receipt(self.digests[0], encode_leaf_set(tree.leaves), attestation)
+        self.assertEqual(upgraded_receipt(self.store, self.digests[0]), published)
 
 
 if __name__ == "__main__":

@@ -14,12 +14,13 @@ from opentimestamps.core.timestamp import Timestamp
 from zeitwerk import ZeitwerkPendingAttestation, deserialize_attestation, serialize_attestation
 from zeitwerk.server import RECOVER_URI, make_server
 from zeitwerk.store import Store
+from zeitwerk.witness import EPOCH_SECONDS, close_due, verify_signed_receipt
 
 FAKE_NOW = 7 * 3600 + 12  # 07:00:12 UTC on 1 January 1970, so epoch 7
 
 
-def start(data_dir):
-    server = make_server(data_dir, port=0, now=lambda: FAKE_NOW)
+def start(data_dir, now=lambda: FAKE_NOW):
+    server = make_server(data_dir, port=0, now=now)
     # A short poll so shutdown() doesn't wait half a second each restart.
     threading.Thread(target=server.serve_forever, args=(0.01,), daemon=True).start()
     return server
@@ -128,6 +129,49 @@ class ServerRestartTests(unittest.TestCase):
         before = request(server, "GET", "/key")
         server = self._restart(server)
         self.assertEqual(request(server, "GET", "/key"), before)
+
+    def test_a_sealed_receipt_is_the_same_after_a_restart(self):
+        digest = b"\x09" * 32
+        server = start(self.data_dir)
+        request(server, "POST", "/digest", digest)
+        close_due(server.store, server.signer, FAKE_NOW + EPOCH_SECONDS)
+        _, receipt = request(server, "GET", "/timestamp/" + digest.hex())
+        server = self._restart(server)
+        self.assertEqual(request(server, "GET", "/timestamp/" + digest.hex()), (200, receipt))
+
+
+class ServerUpgradeTests(unittest.TestCase):
+    """End to end (issue #17): submit, seal the hour, fetch, verify against /key."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.clock = FAKE_NOW
+        self.server = start(tmp.name, now=lambda: self.clock)
+        self.addCleanup(stop, self.server)
+        self.digest = b"\x08" * 32
+        request(self.server, "POST", "/digest", self.digest)
+
+    def _seal_the_hour(self):
+        self.clock += EPOCH_SECONDS
+        close_due(self.server.store, self.server.signer, self.server.now())
+
+    def test_get_timestamp_returns_the_receipt_once_sealed(self):
+        self._seal_the_hour()
+        status, _ = request(self.server, "GET", "/timestamp/" + self.digest.hex())
+        self.assertEqual(status, 200)
+
+    def test_the_receipt_verifies_offline_against_get_key(self):
+        self._seal_the_hour()
+        _, receipt = request(self.server, "GET", "/timestamp/" + self.digest.hex())
+        _, public_key = request(self.server, "GET", "/key")
+        self.assertTrue(verify_signed_receipt(self.digest, receipt, public_key))
+
+    def test_still_pending_once_the_hour_is_over_but_not_sealed(self):
+        self.clock += EPOCH_SECONDS
+        self.assertEqual(
+            request(self.server, "GET", "/timestamp/" + self.digest.hex()), (404, b"Pending")
+        )
 
 
 class ServerRefusalTests(unittest.TestCase):
