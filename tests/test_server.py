@@ -3,39 +3,71 @@
 Runs with the stdlib: `python3 -m unittest discover tests`.
 """
 
+import contextlib
 import http.client
+import io
+import socket
+import sqlite3
+import tempfile
 import threading
 import unittest
+from unittest import mock
 
 import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
 from opentimestamps.core.serialize import BytesDeserializationContext
 from opentimestamps.core.timestamp import Timestamp
 from zeitwerk import ZeitwerkPendingAttestation, deserialize_attestation, serialize_attestation
-from zeitwerk.server import RECOVER_URI, make_server
+from zeitwerk.server import Handler, make_server, start_closer
+from zeitwerk.store import Store
+from zeitwerk.witness import EPOCH_SECONDS, close_due, verify_signed_receipt
 
 FAKE_NOW = 7 * 3600 + 12  # 07:00:12 UTC on 1 January 1970, so epoch 7
+
+
+def start(data_dir, now=lambda: FAKE_NOW, **kwargs):
+    server = make_server(data_dir, port=0, now=now, **kwargs)
+    # A short poll so shutdown() doesn't wait half a second each restart.
+    threading.Thread(target=server.serve_forever, args=(0.01,), daemon=True).start()
+    return server
+
+
+def stop(server):
+    server.shutdown()
+    server.server_close()
+    server.store.close()
+
+
+def pending_attestation(receipt, digest):
+    stamp = Timestamp.deserialize(BytesDeserializationContext(receipt), digest)
+    # Stock OTS doesn't know our tag and parses it as UnknownAttestation,
+    # hence the round trip through ours before comparing.
+    [(_, attestation)] = stamp.all_attestations()
+    return deserialize_attestation(serialize_attestation(attestation))
+
+
+def request(server, method, path, body=None):
+    conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1])
+    try:
+        conn.request(method, path, body=body)
+        resp = conn.getresponse()
+        return resp.status, resp.read()
+    finally:
+        conn.close()
 
 
 class ServerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.server = make_server(port=0, now=lambda: FAKE_NOW)
-        cls.port = cls.server.server_address[1]
-        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.server = start(cls.tmp.name)
 
     @classmethod
     def tearDownClass(cls):
-        cls.server.shutdown()
-        cls.server.server_close()
+        stop(cls.server)
+        cls.tmp.cleanup()
 
     def _request(self, method, path, body=None):
-        conn = http.client.HTTPConnection("127.0.0.1", self.port)
-        try:
-            conn.request(method, path, body=body)
-            resp = conn.getresponse()
-            return resp.status, resp.read()
-        finally:
-            conn.close()
+        return request(self.server, method, path, body)
 
     def _status(self, method, path, body=None):
         return self._request(method, path, body)[0]
@@ -43,13 +75,10 @@ class ServerTests(unittest.TestCase):
     def test_post_digest_returns_a_receipt_pending_in_the_clocks_epoch(self):
         digest = b"\x01" * 32
         _, body = self._request("POST", "/digest", digest)
-        stamp = Timestamp.deserialize(BytesDeserializationContext(body), digest)
-        # Stock OTS doesn't know our tag and parses it as UnknownAttestation,
-        # hence the round trip through ours before comparing.
-        [(_, attestation)] = stamp.all_attestations()
+        here = f"http://127.0.0.1:{self.server.server_address[1]}"  # points back at this server
         self.assertEqual(
-            deserialize_attestation(serialize_attestation(attestation)),
-            ZeitwerkPendingAttestation(epoch_submit=7, recover_uri=RECOVER_URI),
+            pending_attestation(body, digest),
+            ZeitwerkPendingAttestation(epoch_submit=7, recover_uri=here),
         )
 
     def test_post_digest_rejects_anything_but_32_bytes(self):
@@ -75,11 +104,168 @@ class ServerTests(unittest.TestCase):
     def test_get_timestamp_is_not_found_when_never_submitted(self):
         self.assertEqual(self._request("GET", "/timestamp/" + "04" * 32), (404, b"Not found"))
 
-    def test_get_key_is_not_implemented(self):
-        self.assertEqual(self._status("GET", "/key"), 501)
+    def test_get_key_returns_public_key(self):
+        status, body = self._request("GET", "/key")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body), 32)  # Ed25519 public key is 32 bytes
 
     def test_unknown_path_is_404(self):
         self.assertEqual(self._status("GET", "/nope"), 404)
+
+
+class ServerRecoverUriTests(unittest.TestCase):
+    def test_a_public_server_names_its_own_recover_uri(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        server = start(tmp.name, recover_uri="https://zeitwerk.example")
+        self.addCleanup(stop, server)
+        digest = b"\x0b" * 32
+        _, body = request(server, "POST", "/digest", digest)
+        self.assertEqual(pending_attestation(body, digest).recover_uri, "https://zeitwerk.example")
+
+
+class ServerTimeoutTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.enterContext(mock.patch.object(Handler, "timeout", 0.1))
+        self.server = start(tmp.name)
+        self.addCleanup(stop, self.server)
+
+    def test_a_client_stalling_mid_upload_gets_hung_up_on(self):
+        """Rather than holding a server thread forever."""
+        address = ("127.0.0.1", self.server.server_address[1])
+        with socket.create_connection(address, timeout=5) as sock:
+            sock.sendall(b"POST /digest HTTP/1.0\r\nContent-Length: 32\r\n\r\n" + b"\x01" * 10)
+            self.assertEqual(sock.recv(1), b"")  # closed, no reply
+
+
+class ServerRestartTests(unittest.TestCase):
+    """A restart on the same data directory loses nothing."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.data_dir = tmp.name
+
+    def _restart(self, server):
+        stop(server)
+        server = start(self.data_dir)
+        self.addCleanup(stop, server)
+        return server
+
+    def test_a_submission_is_still_pending_after_a_restart(self):
+        digest = b"\x05" * 32
+        server = start(self.data_dir)
+        request(server, "POST", "/digest", digest)
+        server = self._restart(server)
+        self.assertEqual(request(server, "GET", "/timestamp/" + digest.hex()), (404, b"Pending"))
+
+    def test_the_key_is_the_same_after_a_restart(self):
+        server = start(self.data_dir)
+        before = request(server, "GET", "/key")
+        server = self._restart(server)
+        self.assertEqual(request(server, "GET", "/key"), before)
+
+    def test_a_sealed_receipt_is_the_same_after_a_restart(self):
+        digest = b"\x09" * 32
+        server = start(self.data_dir)
+        request(server, "POST", "/digest", digest)
+        close_due(server.store, server.signer, FAKE_NOW + EPOCH_SECONDS)
+        _, receipt = request(server, "GET", "/timestamp/" + digest.hex())
+        server = self._restart(server)
+        self.assertEqual(request(server, "GET", "/timestamp/" + digest.hex()), (200, receipt))
+
+
+class ServerUpgradeTests(unittest.TestCase):
+    """End to end (issue #17): submit, seal the hour, fetch, verify against /key."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.clock = FAKE_NOW
+        self.server = start(tmp.name, now=lambda: self.clock)
+        self.addCleanup(stop, self.server)
+        self.digest = b"\x08" * 32
+        request(self.server, "POST", "/digest", self.digest)
+
+    def _seal_the_hour(self):
+        self.clock += EPOCH_SECONDS
+        close_due(self.server.store, self.server.signer, self.server.now())
+
+    def test_the_receipt_verifies_offline_against_get_key(self):
+        self._seal_the_hour()
+        _, receipt = request(self.server, "GET", "/timestamp/" + self.digest.hex())
+        _, public_key = request(self.server, "GET", "/key")
+        self.assertTrue(verify_signed_receipt(self.digest, receipt, public_key))
+
+    def test_still_pending_once_the_hour_is_over_but_not_sealed(self):
+        self.clock += EPOCH_SECONDS
+        self.assertEqual(
+            request(self.server, "GET", "/timestamp/" + self.digest.hex()), (404, b"Pending")
+        )
+
+
+class CloserTests(unittest.TestCase):
+    """The background thread that seals each finished hour."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.clock = FAKE_NOW
+        self.server = start(tmp.name, now=lambda: self.clock)
+        self.addCleanup(stop, self.server)
+
+    def test_its_first_run_seals_a_finished_hour(self):
+        """The first run is straight away, so a restart catches up on missed hours."""
+        digest = b"\x0a" * 32
+        request(self.server, "POST", "/digest", digest)
+        self.clock += EPOCH_SECONDS
+        start_closer(self.server)()  # stopping waits for that first run to finish
+        status, _ = request(self.server, "GET", "/timestamp/" + digest.hex())
+        self.assertEqual(status, 200)
+
+    def test_it_carries_on_after_a_failed_run(self):
+        runs = []
+        second_run = threading.Event()
+
+        def flaky_close_due(store, signer, now):
+            runs.append(now)
+            if len(runs) == 1:
+                raise sqlite3.OperationalError("database is locked")
+            second_run.set()
+            return []
+
+        with mock.patch("zeitwerk.server.close_due", flaky_close_due), \
+                contextlib.redirect_stderr(io.StringIO()):  # the traceback it prints
+            self.addCleanup(start_closer(self.server, interval=0.001))
+            self.assertTrue(second_run.wait(timeout=5))
+
+
+class ServerRefusalTests(unittest.TestCase):
+    """When the store turns a submission away, the client still gets an answer."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.server = start(tmp.name)
+        self.addCleanup(stop, self.server)
+
+    def test_a_closed_epoch_is_503(self):
+        self.server.store.close_epoch(7)  # the closer got there between the clock and the store
+        self.assertEqual(
+            request(self.server, "POST", "/digest", b"\x06" * 32),
+            (503, b"Epoch closed, try again"),
+        )
+
+    def test_a_full_epoch_is_503(self):
+        self.server.store.close()
+        self.server.store = Store(":memory:", max_leaves=1)
+        request(self.server, "POST", "/digest", b"\x06" * 32)
+        self.assertEqual(
+            request(self.server, "POST", "/digest", b"\x07" * 32),
+            (503, b"Epoch full, try again next hour"),
+        )
 
 
 if __name__ == "__main__":
