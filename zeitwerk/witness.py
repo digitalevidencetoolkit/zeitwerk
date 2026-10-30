@@ -1,7 +1,8 @@
 """The witness behind the HTTP routes (issue #17).
 
-The pending receipt, the signed attestation the hourly close will hang on an
-epoch's tip, and the offline check of a signed receipt. Sealing comes next.
+The pending receipt, the signed attestation the hourly close hangs on an
+epoch's tip, the close itself, the upgraded receipt, and the offline check of
+a signed receipt.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from zeitwerk.attestation import (
 )
 from zeitwerk.epochtree import check_digest, verify_receipt
 from zeitwerk.signer import Signer, key_id_of
+from zeitwerk.store import Store
 
 EPOCH_SECONDS = 3600
 KEY_ID_SIZE = 8
@@ -46,6 +48,26 @@ def signed_attestation(signer: Signer, epoch: int, root: bytes) -> ZeitwerkAttes
         anchor_type=AnchorType.WITNESS_ED25519,
         anchor_ref=signer.key_id + signer.sign(epoch, root),
     )
+
+
+def close_due(store: Store, signer: Signer, now: float) -> list[int]:
+    """Seal every finished hour that has submissions; return the epochs sealed.
+
+    For each of store.unsealed_epochs(current epoch), oldest first:
+    close_epoch freezes the leaf set, build_epoch_tree gives the root,
+    signed_attestation signs it, and seal_epoch stores both. All state is in
+    SQLite, so after a crash the next call just carries on.
+    """
+    raise NotImplementedError
+
+
+def upgraded_receipt(store: Store, digest: bytes) -> bytes | None:
+    """The receipt for a sealed fingerprint, or None while pending or unknown.
+
+    Rebuilt by recover_receipt from the leaf set and attestation, never
+    stored: the bytes are the same ones /recover and the published list give.
+    """
+    raise NotImplementedError
 
 
 def verify_signed_receipt(digest: bytes, receipt: bytes, pubkey: bytes) -> bool:

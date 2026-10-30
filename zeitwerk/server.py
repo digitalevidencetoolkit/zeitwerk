@@ -14,6 +14,7 @@ and the signing key, so a restart loses nothing.
 
 from __future__ import annotations
 
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -70,7 +71,7 @@ class Handler(BaseHTTPRequestHandler):
             check_digest(digest)
         except ValueError:
             return self._reply(400, "Expected a 64-character hex digest")
-        # Nothing gets upgraded yet, that waits for the hourly closer.
+        # Nothing gets upgraded yet: next, a 200 with witness.upgraded_receipt.
         self._reply(404, "Pending" if self.server.store.is_submitted(digest) else "Not found")
 
     def get_key(self):
@@ -108,6 +109,15 @@ def make_server(
     server.store = Store(data_dir / "zeitwerk.db")
     server.signer = Signer(data_dir / "signer.pem")
     return server
+
+
+def start_closer(server: ThreadingHTTPServer, interval: float = 60.0) -> threading.Thread:
+    """Call witness.close_due every `interval` seconds, in a daemon thread.
+
+    Uses the server's own store, signer and clock. main() starts it next to
+    serve_forever; the tests call close_due directly with a fake clock.
+    """
+    raise NotImplementedError
 
 
 def main() -> None:

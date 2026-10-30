@@ -195,3 +195,20 @@ class Store:
             except Exception:
                 self._conn.rollback()
                 raise
+
+    def unsealed_epochs(self, before: int) -> list[int]:
+        """Hours older than `before` that have submissions but no seal, oldest first.
+
+        Takes in an hour that was closed but never sealed (a crash between
+        close_epoch and seal_epoch), so the closer picks it back up. An hour
+        with no submissions never shows up: there is nothing to publish.
+        """
+        raise NotImplementedError
+
+    def sealed_for(self, digest: bytes) -> tuple[bytes, bytes] | None:
+        """The earliest sealed hour holding this fingerprint, or None.
+
+        Returns that hour's (leaf_set, attestation), just what recover_receipt
+        needs to rebuild the receipt. None while it is pending, or unknown.
+        """
+        raise NotImplementedError
