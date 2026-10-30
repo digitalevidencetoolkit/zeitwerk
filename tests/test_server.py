@@ -6,6 +6,7 @@ Runs with the stdlib: `python3 -m unittest discover tests`.
 import contextlib
 import http.client
 import io
+import socket
 import sqlite3
 import tempfile
 import threading
@@ -23,8 +24,8 @@ from zeitwerk.witness import EPOCH_SECONDS, close_due, verify_signed_receipt
 FAKE_NOW = 7 * 3600 + 12  # 07:00:12 UTC on 1 January 1970, so epoch 7
 
 
-def start(data_dir, now=lambda: FAKE_NOW):
-    server = make_server(data_dir, port=0, now=now)
+def start(data_dir, now=lambda: FAKE_NOW, **kwargs):
+    server = make_server(data_dir, port=0, now=now, **kwargs)
     # A short poll so shutdown() doesn't wait half a second each restart.
     threading.Thread(target=server.serve_forever, args=(0.01,), daemon=True).start()
     return server
@@ -105,6 +106,21 @@ class ServerTests(unittest.TestCase):
 
     def test_unknown_path_is_404(self):
         self.assertEqual(self._status("GET", "/nope"), 404)
+
+
+class ServerTimeoutTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.server = start(tmp.name, read_timeout=0.1)
+        self.addCleanup(stop, self.server)
+
+    def test_a_client_stalling_mid_upload_gets_hung_up_on(self):
+        """Rather than holding a server thread forever."""
+        address = ("127.0.0.1", self.server.server_address[1])
+        with socket.create_connection(address, timeout=5) as sock:
+            sock.sendall(b"POST /digest HTTP/1.0\r\nContent-Length: 32\r\n\r\n" + b"\x01" * 10)
+            self.assertEqual(sock.recv(1), b"")  # closed, no reply
 
 
 class ServerRestartTests(unittest.TestCase):

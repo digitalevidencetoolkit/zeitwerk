@@ -31,10 +31,17 @@ from zeitwerk.witness import EPOCH_SECONDS, close_due, pending_receipt, upgraded
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 14788
 DEFAULT_DATA_DIR = Path.home() / ".zeitwerk"
+READ_TIMEOUT = 10.0  # seconds a client gets to send its request, then we hang up
 RECOVER_URI = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
 
 
 class Handler(BaseHTTPRequestHandler):
+    def setup(self):
+        # StreamRequestHandler puts self.timeout on the socket: a client that
+        # stalls mid-request gets hung up on, rather than holding a thread.
+        self.timeout = self.server.read_timeout
+        super().setup()
+
     def do_POST(self):
         if self.path == "/digest":
             self.post_digest()
@@ -102,6 +109,7 @@ def make_server(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     now=time.time,
+    read_timeout: float = READ_TIMEOUT,
 ) -> ThreadingHTTPServer:
     """`data_dir` holds the database and the signing key; reuse it to restart.
 
@@ -112,6 +120,7 @@ def make_server(
     server = ThreadingHTTPServer((host, port), Handler)
     # Hung on the server so the handlers can get at them via self.server.
     server.now = now
+    server.read_timeout = read_timeout
     server.store = Store(data_dir / "zeitwerk.db")
     server.signer = Signer(data_dir / "signer.pem")
     return server
