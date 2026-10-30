@@ -5,9 +5,17 @@ import hashlib
 import unittest
 
 import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
+from zeitwerk.attestation import deserialize_attestation
 from zeitwerk.epochtree import build_epoch_tree, encode_leaf_set, recover_receipt
 from zeitwerk.signer import Signer
-from zeitwerk.witness import pending_receipt, signed_attestation, verify_signed_receipt
+from zeitwerk.store import Store
+from zeitwerk.witness import (
+    EPOCH_SECONDS,
+    close_due,
+    pending_receipt,
+    signed_attestation,
+    verify_signed_receipt,
+)
 
 EPOCH = 7
 
@@ -63,6 +71,57 @@ class VerifySignedReceiptTests(unittest.TestCase):
 
     def test_garbage_receipt_fails(self):
         self.assertFalse(verify_signed_receipt(self.digests[0], b"\xff" * 10, self.signer.public_key))
+
+
+def _hour(epoch):
+    """The fake clock's time at the start of an epoch."""
+    return epoch * EPOCH_SECONDS
+
+
+class CloseDueTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.addCleanup(self.store.close)
+        self.signer = Signer()
+        self.digests = _digests(3)
+
+    def _submit(self, epoch):
+        for digest in self.digests:
+            self.store.add_submission(digest, epoch)
+
+    def test_nothing_to_seal_in_an_empty_store(self):
+        self.assertEqual(close_due(self.store, self.signer, _hour(EPOCH)), [])
+
+    def test_seals_a_finished_hour(self):
+        self._submit(EPOCH)
+        self.assertEqual(close_due(self.store, self.signer, _hour(EPOCH + 1)), [EPOCH])
+
+    def test_leaves_the_current_hour_open(self):
+        self._submit(EPOCH)
+        self.assertEqual(close_due(self.store, self.signer, _hour(EPOCH + 1) - 1), [])
+
+    def test_seals_several_hours_oldest_first(self):
+        self._submit(EPOCH + 1)
+        self._submit(EPOCH)
+        self.assertEqual(close_due(self.store, self.signer, _hour(EPOCH + 2)), [EPOCH, EPOCH + 1])
+
+    def test_a_second_call_has_nothing_left_to_seal(self):
+        self._submit(EPOCH)
+        close_due(self.store, self.signer, _hour(EPOCH + 1))
+        self.assertEqual(close_due(self.store, self.signer, _hour(EPOCH + 1)), [])
+
+    def test_picks_up_an_hour_closed_but_never_sealed(self):
+        """A crash between close and seal: the next call carries on."""
+        self._submit(EPOCH)
+        self.store.close_epoch(EPOCH)
+        self.assertEqual(close_due(self.store, self.signer, _hour(EPOCH + 1)), [EPOCH])
+
+    def test_the_sealed_hour_verifies_against_the_key(self):
+        self._submit(EPOCH)
+        close_due(self.store, self.signer, _hour(EPOCH + 1))
+        leaf_set, attestation = self.store.sealed_for(self.digests[0])
+        receipt = recover_receipt(self.digests[0], leaf_set, deserialize_attestation(attestation))
+        self.assertTrue(verify_signed_receipt(self.digests[0], receipt, self.signer.public_key))
 
 
 if __name__ == "__main__":

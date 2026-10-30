@@ -21,7 +21,7 @@ from zeitwerk.attestation import (
     deserialize_attestation,
     serialize_attestation,
 )
-from zeitwerk.epochtree import check_digest, verify_receipt
+from zeitwerk.epochtree import build_epoch_tree, check_digest, decode_leaf_set, verify_receipt
 from zeitwerk.signer import Signer, key_id_of
 from zeitwerk.store import Store
 
@@ -58,7 +58,15 @@ def close_due(store: Store, signer: Signer, now: float) -> list[int]:
     signed_attestation signs it, and seal_epoch stores both. All state is in
     SQLite, so after a crash the next call just carries on.
     """
-    raise NotImplementedError
+    current = int(now) // EPOCH_SECONDS
+    sealed = []
+    for epoch in store.unsealed_epochs(before=current):
+        leaf_set = store.close_epoch(epoch)  # from here on, latecomers get EpochClosed
+        tree = build_epoch_tree(decode_leaf_set(leaf_set))
+        attestation = signed_attestation(signer, epoch, tree.root)
+        store.seal_epoch(epoch, tree.root, serialize_attestation(attestation))
+        sealed.append(epoch)
+    return sealed
 
 
 def upgraded_receipt(store: Store, digest: bytes) -> bytes | None:
