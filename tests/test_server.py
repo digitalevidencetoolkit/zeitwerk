@@ -3,16 +3,20 @@
 Runs with the stdlib: `python3 -m unittest discover tests`.
 """
 
+import contextlib
 import http.client
+import io
+import sqlite3
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
 from opentimestamps.core.serialize import BytesDeserializationContext
 from opentimestamps.core.timestamp import Timestamp
 from zeitwerk import ZeitwerkPendingAttestation, deserialize_attestation, serialize_attestation
-from zeitwerk.server import RECOVER_URI, make_server
+from zeitwerk.server import RECOVER_URI, make_server, start_closer
 from zeitwerk.store import Store
 from zeitwerk.witness import EPOCH_SECONDS, close_due, verify_signed_receipt
 
@@ -172,6 +176,42 @@ class ServerUpgradeTests(unittest.TestCase):
         self.assertEqual(
             request(self.server, "GET", "/timestamp/" + self.digest.hex()), (404, b"Pending")
         )
+
+
+class CloserTests(unittest.TestCase):
+    """The background thread that seals each finished hour."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.clock = FAKE_NOW
+        self.server = start(tmp.name, now=lambda: self.clock)
+        self.addCleanup(stop, self.server)
+
+    def test_its_first_run_seals_a_finished_hour(self):
+        """The first run is straight away, so a restart catches up on missed hours."""
+        digest = b"\x0a" * 32
+        request(self.server, "POST", "/digest", digest)
+        self.clock += EPOCH_SECONDS
+        start_closer(self.server)()  # stopping waits for that first run to finish
+        status, _ = request(self.server, "GET", "/timestamp/" + digest.hex())
+        self.assertEqual(status, 200)
+
+    def test_it_carries_on_after_a_failed_run(self):
+        runs = []
+        second_run = threading.Event()
+
+        def flaky_close_due(store, signer, now):
+            runs.append(now)
+            if len(runs) == 1:
+                raise sqlite3.OperationalError("database is locked")
+            second_run.set()
+            return []
+
+        with mock.patch("zeitwerk.server.close_due", flaky_close_due), \
+                contextlib.redirect_stderr(io.StringIO()):  # the traceback it prints
+            self.addCleanup(start_closer(self.server, interval=0.001))
+            self.assertTrue(second_run.wait(timeout=5))
 
 
 class ServerRefusalTests(unittest.TestCase):

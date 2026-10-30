@@ -1,10 +1,12 @@
-"""The witness server's HTTP side (issue #17), still half stub.
+"""The witness server's HTTP side (issue #17).
 
 Same URL shape as an OpenTimestamps calendar, on the stdlib `http.server`:
 
     POST /digest            32 raw bytes in, pending receipt out
     GET  /timestamp/<hex>   the upgraded receipt, or 404 while pending
     GET  /key               the signer's raw Ed25519 public key
+
+A background thread seals each hour once it is over (start_closer).
 
 State lives in a data directory, `~/.zeitwerk` by default: the SQLite store
 and the signing key, so a restart loses nothing.
@@ -16,13 +18,15 @@ from __future__ import annotations
 
 import threading
 import time
+import traceback
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from zeitwerk.epochtree import DIGEST_SIZE, check_digest
 from zeitwerk.signer import Signer
 from zeitwerk.store import EpochClosed, EpochFull, Store
-from zeitwerk.witness import EPOCH_SECONDS, pending_receipt, upgraded_receipt
+from zeitwerk.witness import EPOCH_SECONDS, close_due, pending_receipt, upgraded_receipt
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 14788
@@ -113,18 +117,38 @@ def make_server(
     return server
 
 
-def start_closer(server: ThreadingHTTPServer, interval: float = 60.0) -> threading.Thread:
+def start_closer(server: ThreadingHTTPServer, interval: float = 60.0) -> Callable[[], None]:
     """Call witness.close_due every `interval` seconds, in a daemon thread.
 
-    Uses the server's own store, signer and clock. main() starts it next to
-    serve_forever; the tests call close_due directly with a fake clock.
+    Uses the server's own store, signer and clock. The first run is straight
+    away, so a restart catches up on the hours it missed. Returns a function
+    that stops the thread and waits for it.
     """
-    raise NotImplementedError
+    stopped = threading.Event()
+
+    def run():
+        while True:
+            try:
+                close_due(server.store, server.signer, server.now())
+            except Exception:  # try again next time: a dead closer would strand every receipt
+                traceback.print_exc()
+            if stopped.wait(interval):
+                return
+
+    thread = threading.Thread(target=run, name="zeitwerk-closer", daemon=True)
+    thread.start()
+
+    def stop():
+        stopped.set()
+        thread.join()
+
+    return stop
 
 
 def main() -> None:
     server = make_server(DEFAULT_DATA_DIR)
-    print(f"zeitwerk witness (stub) on http://{DEFAULT_HOST}:{DEFAULT_PORT}")
+    start_closer(server)
+    print(f"zeitwerk witness on http://{DEFAULT_HOST}:{DEFAULT_PORT}")
     server.serve_forever()
 
 
