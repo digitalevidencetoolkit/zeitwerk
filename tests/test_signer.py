@@ -50,6 +50,12 @@ class SignerTests(unittest.TestCase):
             )
         )
 
+    def test_misused_verify_raises(self):
+        """A caller bug (no signature at all) raises, rather than reading as a bad signature."""
+        signer = Signer()
+        with self.assertRaises(TypeError):
+            Signer.verify(signer.public_key, 42, b"\x00" * 32, signer.key_id, None)
+
     def test_key_id_is_first_8_sha256_bytes(self):
         """key_id is first 8 bytes of SHA-256(public_key)."""
         import hashlib
@@ -67,6 +73,21 @@ class SignerTests(unittest.TestCase):
         """key_id is 8 bytes."""
         signer = Signer()
         self.assertEqual(len(signer.key_id), 8)
+
+    def test_key_file_survives_restart(self):
+        """A key written on first run is loaded back, so old signatures still verify."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            key_path = Path(tmp) / "witness.pem"
+            sig = Signer(key_path).sign(42, b"\x00" * 32)
+            restarted = Signer(key_path)
+            self.assertTrue(
+                Signer.verify(
+                    restarted.public_key, 42, b"\x00" * 32, restarted.key_id, sig
+                )
+            )
 
 
 if __name__ == "__main__":

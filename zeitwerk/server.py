@@ -6,8 +6,8 @@ Same URL shape as an OpenTimestamps calendar, on the stdlib `http.server`:
     GET  /timestamp/<hex>   the upgraded receipt, or 404 while pending
     GET  /key               the signer's raw Ed25519 public key
 
-For now submissions just sit in a set in memory, so a restart forgets them
-(the SQLite store will fix that).
+State lives in a data directory, `~/.zeitwerk` by default: the SQLite store
+and the signing key, so a restart loses nothing.
 
     python -m zeitwerk.server
 """
@@ -16,13 +16,16 @@ from __future__ import annotations
 
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from zeitwerk.epochtree import DIGEST_SIZE, check_digest
 from zeitwerk.signer import Signer
+from zeitwerk.store import EpochClosed, EpochFull, Store
 from zeitwerk.witness import EPOCH_SECONDS, pending_receipt
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 14788
+DEFAULT_DATA_DIR = Path.home() / ".zeitwerk"
 RECOVER_URI = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
 
 
@@ -52,7 +55,12 @@ class Handler(BaseHTTPRequestHandler):
             receipt = pending_receipt(digest, epoch, RECOVER_URI)
         except (TypeError, ValueError):  # no Content-Length, a silly one, or just not 32 bytes
             return self._reply(400, "Expected a 32-byte digest")
-        self.server.submitted.add(digest)
+        try:
+            self.server.store.add_submission(digest, epoch)  # on disk before we reply
+        except EpochClosed:  # the hour closed between reading the clock and here
+            return self._reply(503, "Epoch closed, try again")
+        except EpochFull:
+            return self._reply(503, "Epoch full, try again next hour")
         self._reply(200, receipt, "application/octet-stream")
 
     def get_timestamp(self, hex_digest: str):
@@ -63,7 +71,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return self._reply(400, "Expected a 64-character hex digest")
         # Nothing gets upgraded yet, that waits for the hourly closer.
-        self._reply(404, "Pending" if digest in self.server.submitted else "Not found")
+        self._reply(404, "Pending" if self.server.store.is_submitted(digest) else "Not found")
 
     def get_key(self):
         """Return the signer's raw Ed25519 public key."""
@@ -83,19 +91,27 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(
-    host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, now=time.time
+    data_dir: str | Path,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    now=time.time,
 ) -> ThreadingHTTPServer:
-    """`now` is swappable so the tests don't have to wait an hour."""
+    """`data_dir` holds the database and the signing key; reuse it to restart.
+
+    `now` is swappable so the tests don't have to wait an hour.
+    """
+    data_dir = Path(data_dir)
+    data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)  # the private key lives here
     server = ThreadingHTTPServer((host, port), Handler)
     # Hung on the server so the handlers can get at them via self.server.
     server.now = now
-    server.submitted = set()
-    server.signer = Signer()
+    server.store = Store(data_dir / "zeitwerk.db")
+    server.signer = Signer(data_dir / "signer.pem")
     return server
 
 
 def main() -> None:
-    server = make_server()
+    server = make_server(DEFAULT_DATA_DIR)
     print(f"zeitwerk witness (stub) on http://{DEFAULT_HOST}:{DEFAULT_PORT}")
     server.serve_forever()
 
