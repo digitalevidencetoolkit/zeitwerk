@@ -89,6 +89,16 @@ class SignerTests(unittest.TestCase):
                 )
             )
 
+    def test_key_file_is_readable_by_its_owner_only(self):
+        """Whatever the umask: it holds the private key."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            key_path = Path(tmp) / "witness.pem"
+            Signer(key_path)
+            self.assertEqual(key_path.stat().st_mode & 0o777, 0o600)
+
 
 if __name__ == "__main__":
     unittest.main()

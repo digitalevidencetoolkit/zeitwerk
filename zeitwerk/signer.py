@@ -40,6 +40,7 @@ class Signer:
                 )
             else:
                 self._private_key = Ed25519PrivateKey.generate()
+                key_path.touch(mode=0o600, exist_ok=False)  # private before the key goes in
                 key_path.write_bytes(
                     self._private_key.private_bytes(
                         Encoding.PEM,
