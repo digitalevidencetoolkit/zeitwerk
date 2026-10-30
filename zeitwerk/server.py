@@ -20,7 +20,7 @@ from pathlib import Path
 
 from zeitwerk.epochtree import DIGEST_SIZE, check_digest
 from zeitwerk.signer import Signer
-from zeitwerk.store import Store
+from zeitwerk.store import EpochClosed, EpochFull, Store
 from zeitwerk.witness import EPOCH_SECONDS, pending_receipt
 
 DEFAULT_HOST = "127.0.0.1"
@@ -55,7 +55,12 @@ class Handler(BaseHTTPRequestHandler):
             receipt = pending_receipt(digest, epoch, RECOVER_URI)
         except (TypeError, ValueError):  # no Content-Length, a silly one, or just not 32 bytes
             return self._reply(400, "Expected a 32-byte digest")
-        self.server.store.add_submission(digest, epoch)  # on disk before we reply
+        try:
+            self.server.store.add_submission(digest, epoch)  # on disk before we reply
+        except EpochClosed:  # the hour closed between reading the clock and here
+            return self._reply(503, "Epoch closed, try again")
+        except EpochFull:
+            return self._reply(503, "Epoch full, try again next hour")
         self._reply(200, receipt, "application/octet-stream")
 
     def get_timestamp(self, hex_digest: str):
