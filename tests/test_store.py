@@ -158,5 +158,95 @@ class StoreEpochTests(unittest.TestCase):
             self.store.seal_epoch(EPOCH, b"\x03" * 31, b"")
 
 
+def _seal(store, epoch):
+    """Close and seal an hour with a dummy root; return its attestation bytes."""
+    attestation = b"attestation for %d" % epoch
+    store.close_epoch(epoch)
+    store.seal_epoch(epoch, b"\x03" * 32, attestation)
+    return attestation
+
+
+class StoreUnsealedEpochsTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.addCleanup(self.store.close)
+
+    def test_empty_store_has_nothing_to_seal(self):
+        self.assertEqual(self.store.unsealed_epochs(before=EPOCH2), [])
+
+    def test_lists_past_hours_with_submissions_oldest_first(self):
+        self.store.add_submission(DIGEST, EPOCH2)
+        self.store.add_submission(DIGEST, EPOCH)
+        self.assertEqual(self.store.unsealed_epochs(before=EPOCH2 + 1), [EPOCH, EPOCH2])
+
+    def test_leaves_out_the_current_hour(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        self.store.add_submission(DIGEST, EPOCH2)
+        self.assertEqual(self.store.unsealed_epochs(before=EPOCH2), [EPOCH])
+
+    def test_lists_an_hour_once_whatever_its_submissions(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        self.store.add_submission(DIGEST2, EPOCH)
+        self.assertEqual(self.store.unsealed_epochs(before=EPOCH2), [EPOCH])
+
+    def test_leaves_out_sealed_hours(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        self.store.add_submission(DIGEST, EPOCH2)
+        _seal(self.store, EPOCH)
+        self.assertEqual(self.store.unsealed_epochs(before=EPOCH2 + 1), [EPOCH2])
+
+    def test_keeps_an_hour_closed_but_never_sealed(self):
+        """A crash between close and seal: the closer must pick it back up."""
+        self.store.add_submission(DIGEST, EPOCH)
+        self.store.close_epoch(EPOCH)
+        self.assertEqual(self.store.unsealed_epochs(before=EPOCH2), [EPOCH])
+
+    def test_leaves_out_a_closed_empty_hour(self):
+        self.store.close_epoch(EPOCH)
+        self.assertEqual(self.store.unsealed_epochs(before=EPOCH2), [])
+
+
+class StoreSealedForTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.addCleanup(self.store.close)
+
+    def test_unknown_digest_is_none(self):
+        self.assertIsNone(self.store.sealed_for(DIGEST))
+
+    def test_pending_digest_is_none(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        self.assertIsNone(self.store.sealed_for(DIGEST))
+
+    def test_closed_but_unsealed_is_none(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        self.store.close_epoch(EPOCH)
+        self.assertIsNone(self.store.sealed_for(DIGEST))
+
+    def test_sealed_digest_gets_leaf_set_and_attestation(self):
+        self.store.add_submission(DIGEST2, EPOCH)
+        self.store.add_submission(DIGEST, EPOCH)
+        attestation = _seal(self.store, EPOCH)
+        self.assertEqual(self.store.sealed_for(DIGEST), (DIGEST + DIGEST2, attestation))
+
+    def test_digest_in_two_sealed_hours_gets_the_earliest(self):
+        self.store.add_submission(DIGEST, EPOCH2)
+        self.store.add_submission(DIGEST, EPOCH)
+        attestation = _seal(self.store, EPOCH)
+        _seal(self.store, EPOCH2)
+        self.assertEqual(self.store.sealed_for(DIGEST), (DIGEST, attestation))
+
+    def test_skips_an_earlier_hour_not_yet_sealed(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        self.store.add_submission(DIGEST, EPOCH2)
+        self.store.close_epoch(EPOCH)
+        attestation = _seal(self.store, EPOCH2)
+        self.assertEqual(self.store.sealed_for(DIGEST), (DIGEST, attestation))
+
+    def test_rejects_a_bad_digest(self):
+        with self.assertRaises(ValueError):
+            self.store.sealed_for(b"\x01" * 31)
+
+
 if __name__ == "__main__":
     unittest.main()
