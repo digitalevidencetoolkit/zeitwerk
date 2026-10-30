@@ -32,7 +32,6 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 14788
 DEFAULT_DATA_DIR = Path.home() / ".zeitwerk"
 READ_TIMEOUT = 10.0  # seconds a client gets to send its request, then we hang up
-RECOVER_URI = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -64,7 +63,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError(length)
             digest = self.rfile.read(length)
             epoch = int(self.server.now()) // EPOCH_SECONDS
-            receipt = pending_receipt(digest, epoch, RECOVER_URI)
+            receipt = pending_receipt(digest, epoch, self.server.recover_uri)
         except (TypeError, ValueError):  # no Content-Length, a silly one, or just not 32 bytes
             return self._reply(400, "Expected a 32-byte digest")
         try:
@@ -110,10 +109,14 @@ def make_server(
     port: int = DEFAULT_PORT,
     now=time.time,
     read_timeout: float = READ_TIMEOUT,
+    recover_uri: str | None = None,
 ) -> ThreadingHTTPServer:
     """`data_dir` holds the database and the signing key; reuse it to restart.
 
     `now` is swappable so the tests don't have to wait an hour.
+    `recover_uri` goes into every pending receipt: where its holder comes
+    back to. Left out, it is the address the server is bound to, which only
+    suits a local run; a public server names its own.
     """
     data_dir = Path(data_dir)
     data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)  # the private key lives here
@@ -121,6 +124,8 @@ def make_server(
     # Hung on the server so the handlers can get at them via self.server.
     server.now = now
     server.read_timeout = read_timeout
+    bound_host, bound_port = server.server_address[:2]  # port=0 gets a real one here
+    server.recover_uri = recover_uri or f"http://{bound_host}:{bound_port}"
     server.store = Store(data_dir / "zeitwerk.db")
     server.signer = Signer(data_dir / "signer.pem")
     return server

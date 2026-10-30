@@ -17,7 +17,7 @@ import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
 from opentimestamps.core.serialize import BytesDeserializationContext
 from opentimestamps.core.timestamp import Timestamp
 from zeitwerk import ZeitwerkPendingAttestation, deserialize_attestation, serialize_attestation
-from zeitwerk.server import RECOVER_URI, make_server, start_closer
+from zeitwerk.server import make_server, start_closer
 from zeitwerk.store import Store
 from zeitwerk.witness import EPOCH_SECONDS, close_due, verify_signed_receipt
 
@@ -35,6 +35,14 @@ def stop(server):
     server.shutdown()
     server.server_close()
     server.store.close()
+
+
+def pending_attestation(receipt, digest):
+    stamp = Timestamp.deserialize(BytesDeserializationContext(receipt), digest)
+    # Stock OTS doesn't know our tag and parses it as UnknownAttestation,
+    # hence the round trip through ours before comparing.
+    [(_, attestation)] = stamp.all_attestations()
+    return deserialize_attestation(serialize_attestation(attestation))
 
 
 def request(server, method, path, body=None):
@@ -67,13 +75,10 @@ class ServerTests(unittest.TestCase):
     def test_post_digest_returns_a_receipt_pending_in_the_clocks_epoch(self):
         digest = b"\x01" * 32
         _, body = self._request("POST", "/digest", digest)
-        stamp = Timestamp.deserialize(BytesDeserializationContext(body), digest)
-        # Stock OTS doesn't know our tag and parses it as UnknownAttestation,
-        # hence the round trip through ours before comparing.
-        [(_, attestation)] = stamp.all_attestations()
+        here = f"http://127.0.0.1:{self.server.server_address[1]}"  # points back at this server
         self.assertEqual(
-            deserialize_attestation(serialize_attestation(attestation)),
-            ZeitwerkPendingAttestation(epoch_submit=7, recover_uri=RECOVER_URI),
+            pending_attestation(body, digest),
+            ZeitwerkPendingAttestation(epoch_submit=7, recover_uri=here),
         )
 
     def test_post_digest_rejects_anything_but_32_bytes(self):
@@ -106,6 +111,17 @@ class ServerTests(unittest.TestCase):
 
     def test_unknown_path_is_404(self):
         self.assertEqual(self._status("GET", "/nope"), 404)
+
+
+class ServerRecoverUriTests(unittest.TestCase):
+    def test_a_public_server_names_its_own_recover_uri(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        server = start(tmp.name, recover_uri="https://zeitwerk.example")
+        self.addCleanup(stop, server)
+        digest = b"\x0b" * 32
+        _, body = request(server, "POST", "/digest", digest)
+        self.assertEqual(pending_attestation(body, digest).recover_uri, "https://zeitwerk.example")
 
 
 class ServerTimeoutTests(unittest.TestCase):
