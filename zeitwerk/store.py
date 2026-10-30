@@ -203,7 +203,16 @@ class Store:
         close_epoch and seal_epoch), so the closer picks it back up. An hour
         with no submissions never shows up: there is nothing to publish.
         """
-        raise NotImplementedError
+        with self._lock:
+            cursor = self._conn.cursor()
+            cursor.execute(
+                """SELECT DISTINCT s.epoch FROM submissions s
+                   LEFT JOIN epochs e ON e.epoch = s.epoch
+                   WHERE s.epoch < ?
+                   ORDER BY s.epoch""",
+                (before,)
+            )
+            return [row[0] for row in cursor.fetchall()]
 
     def sealed_for(self, digest: bytes) -> tuple[bytes, bytes] | None:
         """The earliest sealed hour holding this fingerprint, or None.
@@ -211,4 +220,14 @@ class Store:
         Returns that hour's (leaf_set, attestation), just what recover_receipt
         needs to rebuild the receipt. None while it is pending, or unknown.
         """
-        raise NotImplementedError
+        check_digest(digest)
+        with self._lock:
+            cursor = self._conn.cursor()
+            cursor.execute(
+                """SELECT e.leaf_set, e.attestation FROM submissions s
+                   JOIN epochs e ON e.epoch = s.epoch
+                   WHERE s.digest = ? 
+                   ORDER BY s.epoch LIMIT 1""",
+                (digest,)
+            )
+            return cursor.fetchone()  # already a (leaf_set, attestation) tuple
