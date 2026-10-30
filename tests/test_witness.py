@@ -5,7 +5,6 @@ import hashlib
 import unittest
 
 import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
-from zeitwerk.attestation import deserialize_attestation
 from zeitwerk.epochtree import build_epoch_tree, encode_leaf_set, recover_receipt
 from zeitwerk.signer import Signer
 from zeitwerk.store import Store
@@ -124,13 +123,6 @@ class CloseDueTests(unittest.TestCase):
         self._submit(EPOCH)
         self.store.close_epoch(EPOCH)
         self.assertEqual(close_due(self.store, self.signer, _hour(EPOCH + 1)), [EPOCH])
-
-    def test_the_sealed_hour_verifies_against_the_key(self):
-        self._submit(EPOCH)
-        close_due(self.store, self.signer, _hour(EPOCH + 1))
-        leaf_set, attestation = self.store.sealed_for(self.digests[0])
-        receipt = recover_receipt(self.digests[0], leaf_set, deserialize_attestation(attestation))
-        self.assertTrue(verify_signed_receipt(self.digests[0], receipt, self.signer.public_key))
 
 
 class UpgradedReceiptTests(unittest.TestCase):

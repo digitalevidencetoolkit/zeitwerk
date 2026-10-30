@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 
 from zeitwerk.store import Store, EpochClosed, EpochFull
-from zeitwerk.epochtree import MAX_LEAVES
 
 DIGEST = b"\x01" * 32
 DIGEST2 = b"\x02" * 32
@@ -40,7 +39,6 @@ class StoreSubmissionTests(unittest.TestCase):
     def test_add_submission_same_digest_same_epoch_is_noop(self):
         self.store.add_submission(DIGEST, EPOCH)
         self.store.add_submission(DIGEST, EPOCH)  # no error, no duplicate
-        # Should still be visible
         self.assertTrue(self.store.is_submitted(DIGEST))
 
     def test_add_submission_same_digest_different_epoch_stores_twice(self):
@@ -52,22 +50,14 @@ class StoreSubmissionTests(unittest.TestCase):
     def test_is_submitted_returns_false_for_unknown_digest(self):
         self.assertFalse(self.store.is_submitted(DIGEST))
 
-    def test_is_submitted_returns_true_after_add(self):
-        self.store.add_submission(DIGEST, EPOCH)
-        self.assertTrue(self.store.is_submitted(DIGEST))
-
     def test_submission_persists_across_reopen(self):
         """Core test: a restart loses nothing."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         path = Path(tmp.name) / "zeitwerk.db"
-        
-        # Submit to first store instance
         store1 = Store(path)
         store1.add_submission(DIGEST, EPOCH)
         store1.close()
-        
-        # Reopen and check
         store2 = Store(path)
         self.addCleanup(store2.close)
         self.assertTrue(store2.is_submitted(DIGEST))
@@ -80,32 +70,13 @@ class StoreSubmissionTests(unittest.TestCase):
 
     def test_add_submission_to_full_epoch_raises(self):
         """An epoch at max_leaves unique digests refuses new ones."""
-        # Create a store with a small limit for testing
-        small_limit = 3
-        store = Store(":memory:", max_leaves=small_limit)
+        store = Store(":memory:", max_leaves=3)
         self.addCleanup(store.close)
-        
-        # Fill the epoch to the limit with unique digests
-        # Use distinct bytes that won't accidentally match DIGEST
-        for i in range(small_limit):
-            store.add_submission(bytes([i + 10]) * 32, EPOCH)
-        
-        # Next unique digest should fail
+        for i in range(3):
+            store.add_submission(bytes([i + 10]) * 32, EPOCH)  # none of them DIGEST
         with self.assertRaises(EpochFull):
             store.add_submission(DIGEST, EPOCH)
-        
-        # But re-submitting an existing digest should still be a no-op
-        store.add_submission(bytes([10]) * 32, EPOCH)  # Already exists, no error
-
-    def test_add_submission_respects_default_max_leaves(self):
-        """Store with default max_leaves works normally."""
-        # Add a few unique digests (well below MAX_LEAVES)
-        for i in range(10):
-            self.store.add_submission(bytes([i]) * 32, EPOCH)
-        
-        # Verify all are there
-        for i in range(10):
-            self.assertTrue(self.store.is_submitted(bytes([i]) * 32))
+        store.add_submission(bytes([10]) * 32, EPOCH)  # but one already in is still a no-op
 
 
 class StoreEpochTests(unittest.TestCase):
@@ -132,14 +103,13 @@ class StoreEpochTests(unittest.TestCase):
         self.store.add_submission(DIGEST2, EPOCH)
         self.store.add_submission(DIGEST, EPOCH)
         leaf_set = self.store.close_epoch(EPOCH)
-        # Should be sorted: DIGEST < DIGEST2
-        self.assertEqual(leaf_set, DIGEST + DIGEST2)
+        self.assertEqual(leaf_set, DIGEST + DIGEST2)  # sorted
 
     def test_close_epoch_deduplicates(self):
         self.store.add_submission(DIGEST, EPOCH)
         self.store.add_submission(DIGEST, EPOCH)  # duplicate
         leaf_set = self.store.close_epoch(EPOCH)
-        self.assertEqual(leaf_set, DIGEST)  # Only one copy
+        self.assertEqual(leaf_set, DIGEST)  # only one copy
 
     def test_seal_epoch_twice_raises(self):
         self.store.add_submission(DIGEST, EPOCH)

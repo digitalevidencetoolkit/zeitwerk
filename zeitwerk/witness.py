@@ -28,11 +28,10 @@ from zeitwerk.epochtree import (
     recover_receipt,
     verify_receipt,
 )
-from zeitwerk.signer import Signer, key_id_of
+from zeitwerk.signer import KEY_ID_SIZE, Signer, key_id_of
 from zeitwerk.store import Store
 
 EPOCH_SECONDS = 3600
-KEY_ID_SIZE = 8
 SIGNATURE_SIZE = 64
 
 
@@ -113,7 +112,7 @@ def verify_signed_receipt(digest: bytes, receipt: bytes, pubkey: bytes) -> bool:
             and len(att.anchor_ref) == KEY_ID_SIZE + SIGNATURE_SIZE
             and att.anchor_ref[:KEY_ID_SIZE] == key_id
             and att.epoch < 2**64  # the signer packs it in 8 bytes
-            and Signer.verify(pubkey, att.epoch, root, key_id, att.anchor_ref[KEY_ID_SIZE:])
+            and Signer.verify(pubkey, att.epoch, root, att.anchor_ref[KEY_ID_SIZE:])
             and verify_receipt(digest, receipt, root)
         ):
             return True

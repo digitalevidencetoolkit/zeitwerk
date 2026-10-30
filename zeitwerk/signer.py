@@ -6,7 +6,10 @@ import hashlib
 from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     NoEncryption,
@@ -16,11 +19,17 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 V0_PREFIX = b"zeitwerk-v0"
+KEY_ID_SIZE = 8
 
 
 def key_id_of(public_key: bytes) -> bytes:
     """First 8 bytes of SHA-256(public_key)."""
-    return hashlib.sha256(public_key).digest()[:8]
+    return hashlib.sha256(public_key).digest()[:KEY_ID_SIZE]
+
+
+def _message(epoch: int, root: bytes, key_id: bytes) -> bytes:
+    """What gets signed: b'zeitwerk-v0' + epoch (8 bytes) + root + key_id."""
+    return V0_PREFIX + epoch.to_bytes(8, "big") + root + key_id
 
 
 class Signer:
@@ -62,23 +71,15 @@ class Signer:
         return key_id_of(self.public_key)
 
     def sign(self, epoch: int, root: bytes) -> bytes:
-        """Sign an epoch root: b'zeitwerk-v0' + epoch + root + key_id."""
-        message = V0_PREFIX + epoch.to_bytes(8, "big") + root + self.key_id
-        return self._private_key.sign(message)
+        """Sign an epoch root (see _message)."""
+        return self._private_key.sign(_message(epoch, root, self.key_id))
 
     @staticmethod
-    def verify(
-        public_key: bytes, epoch: int, root: bytes, key_id: bytes, signature: bytes
-    ) -> bool:
+    def verify(public_key: bytes, epoch: int, root: bytes, signature: bytes) -> bool:
         """Verify a v0 signature. public_key must be 32 raw bytes."""
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-            Ed25519PublicKey,
-        )
-
         pk = Ed25519PublicKey.from_public_bytes(public_key)
-        message = V0_PREFIX + epoch.to_bytes(8, "big") + root + key_id
         try:
-            pk.verify(signature, message)
+            pk.verify(signature, _message(epoch, root, key_id_of(public_key)))
             return True
         except InvalidSignature:
             return False

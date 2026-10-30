@@ -35,11 +35,9 @@ READ_TIMEOUT = 10.0  # seconds a client gets to send its request, then we hang u
 
 
 class Handler(BaseHTTPRequestHandler):
-    def setup(self):
-        # StreamRequestHandler puts self.timeout on the socket: a client that
-        # stalls mid-request gets hung up on, rather than holding a thread.
-        self.timeout = self.server.read_timeout
-        super().setup()
+    # StreamRequestHandler puts this on the socket: a client that stalls
+    # mid-request gets hung up on, rather than holding a thread.
+    timeout = READ_TIMEOUT
 
     def do_POST(self):
         if self.path == "/digest":
@@ -108,7 +106,6 @@ def make_server(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     now=time.time,
-    read_timeout: float = READ_TIMEOUT,
     recover_uri: str | None = None,
 ) -> ThreadingHTTPServer:
     """`data_dir` holds the database and the signing key; reuse it to restart.
@@ -123,7 +120,6 @@ def make_server(
     server = ThreadingHTTPServer((host, port), Handler)
     # Hung on the server so the handlers can get at them via self.server.
     server.now = now
-    server.read_timeout = read_timeout
     bound_host, bound_port = server.server_address[:2]  # port=0 gets a real one here
     server.recover_uri = recover_uri or f"http://{bound_host}:{bound_port}"
     server.store = Store(data_dir / "zeitwerk.db")

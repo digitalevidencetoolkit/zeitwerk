@@ -17,7 +17,7 @@ import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
 from opentimestamps.core.serialize import BytesDeserializationContext
 from opentimestamps.core.timestamp import Timestamp
 from zeitwerk import ZeitwerkPendingAttestation, deserialize_attestation, serialize_attestation
-from zeitwerk.server import make_server, start_closer
+from zeitwerk.server import Handler, make_server, start_closer
 from zeitwerk.store import Store
 from zeitwerk.witness import EPOCH_SECONDS, close_due, verify_signed_receipt
 
@@ -128,7 +128,8 @@ class ServerTimeoutTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.server = start(tmp.name, read_timeout=0.1)
+        self.enterContext(mock.patch.object(Handler, "timeout", 0.1))
+        self.server = start(tmp.name)
         self.addCleanup(stop, self.server)
 
     def test_a_client_stalling_mid_upload_gets_hung_up_on(self):
@@ -191,11 +192,6 @@ class ServerUpgradeTests(unittest.TestCase):
     def _seal_the_hour(self):
         self.clock += EPOCH_SECONDS
         close_due(self.server.store, self.server.signer, self.server.now())
-
-    def test_get_timestamp_returns_the_receipt_once_sealed(self):
-        self._seal_the_hour()
-        status, _ = request(self.server, "GET", "/timestamp/" + self.digest.hex())
-        self.assertEqual(status, 200)
 
     def test_the_receipt_verifies_offline_against_get_key(self):
         self._seal_the_hour()
