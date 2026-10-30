@@ -13,6 +13,7 @@ from opentimestamps.core.serialize import BytesDeserializationContext
 from opentimestamps.core.timestamp import Timestamp
 from zeitwerk import ZeitwerkPendingAttestation, deserialize_attestation, serialize_attestation
 from zeitwerk.server import RECOVER_URI, make_server
+from zeitwerk.store import Store
 
 FAKE_NOW = 7 * 3600 + 12  # 07:00:12 UTC on 1 January 1970, so epoch 7
 
@@ -127,6 +128,32 @@ class ServerRestartTests(unittest.TestCase):
         before = request(server, "GET", "/key")
         server = self._restart(server)
         self.assertEqual(request(server, "GET", "/key"), before)
+
+
+class ServerRefusalTests(unittest.TestCase):
+    """When the store turns a submission away, the client still gets an answer."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.server = start(tmp.name)
+        self.addCleanup(stop, self.server)
+
+    def test_a_closed_epoch_is_503(self):
+        self.server.store.close_epoch(7)  # the closer got there between the clock and the store
+        self.assertEqual(
+            request(self.server, "POST", "/digest", b"\x06" * 32),
+            (503, b"Epoch closed, try again"),
+        )
+
+    def test_a_full_epoch_is_503(self):
+        self.server.store.close()
+        self.server.store = Store(":memory:", max_leaves=1)
+        request(self.server, "POST", "/digest", b"\x06" * 32)
+        self.assertEqual(
+            request(self.server, "POST", "/digest", b"\x07" * 32),
+            (503, b"Epoch full, try again next hour"),
+        )
 
 
 if __name__ == "__main__":
