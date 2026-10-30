@@ -208,7 +208,7 @@ class Store:
             cursor.execute(
                 """SELECT DISTINCT s.epoch FROM submissions s
                    LEFT JOIN epochs e ON e.epoch = s.epoch
-                   WHERE s.epoch < ?
+                   WHERE s.epoch < ? AND e.attestation IS NULL
                    ORDER BY s.epoch""",
                 (before,)
             )
@@ -226,7 +226,7 @@ class Store:
             cursor.execute(
                 """SELECT e.leaf_set, e.attestation FROM submissions s
                    JOIN epochs e ON e.epoch = s.epoch
-                   WHERE s.digest = ? 
+                   WHERE s.digest = ?  AND e.attestation IS NOT NULL
                    ORDER BY s.epoch LIMIT 1""",
                 (digest,)
             )
