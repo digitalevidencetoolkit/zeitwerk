@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS submissions (
     epoch  INTEGER NOT NULL,
     PRIMARY KEY (digest, epoch)
 );
+-- The primary key serves lookups by digest; this one, everything by hour.
+CREATE INDEX IF NOT EXISTS submissions_by_epoch ON submissions (epoch, digest);
 CREATE TABLE IF NOT EXISTS epochs (
     epoch       INTEGER PRIMARY KEY,
     leaf_set    BLOB NOT NULL,  -- frozen at close
