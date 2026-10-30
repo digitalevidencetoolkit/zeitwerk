@@ -112,6 +112,7 @@ def verify_signed_receipt(digest: bytes, receipt: bytes, pubkey: bytes) -> bool:
             and att.anchor_type is AnchorType.WITNESS_ED25519
             and len(att.anchor_ref) == KEY_ID_SIZE + SIGNATURE_SIZE
             and att.anchor_ref[:KEY_ID_SIZE] == key_id
+            and att.epoch < 2**64  # the signer packs it in 8 bytes
             and Signer.verify(pubkey, att.epoch, root, key_id, att.anchor_ref[KEY_ID_SIZE:])
             and verify_receipt(digest, receipt, root)
         ):

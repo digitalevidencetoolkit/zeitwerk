@@ -70,6 +70,14 @@ class VerifySignedReceiptTests(unittest.TestCase):
         receipt = tree.receipt_bytes(self.digests[0])
         self.assertFalse(verify_signed_receipt(self.digests[0], receipt, self.signer.public_key))
 
+    def test_an_epoch_too_big_to_sign_fails(self):
+        """A crafted epoch past 8 bytes reads as a bad receipt, rather than crashing."""
+        tree = build_epoch_tree(self.digests)
+        genuine = signed_attestation(self.signer, EPOCH, tree.root)
+        tree.tip.attestations.add(dataclasses.replace(genuine, epoch=2**64))
+        receipt = tree.receipt_bytes(self.digests[0])
+        self.assertFalse(verify_signed_receipt(self.digests[0], receipt, self.signer.public_key))
+
     def test_garbage_receipt_fails(self):
         self.assertFalse(verify_signed_receipt(self.digests[0], b"\xff" * 10, self.signer.public_key))
 
