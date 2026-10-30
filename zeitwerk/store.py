@@ -139,9 +139,10 @@ class Store:
         """
         with self._lock:
             rows = self._conn.execute(
-                """SELECT DISTINCT s.epoch FROM submissions s
+                """SELECT s.epoch FROM submissions s
                    LEFT JOIN epochs e ON e.epoch = s.epoch
                    WHERE s.epoch < ? AND e.attestation IS NULL
+                   GROUP BY s.epoch
                    ORDER BY s.epoch""",
                 (before,),
             )

@@ -66,7 +66,7 @@ def close_due(store: Store, signer: Signer, now: float) -> list[int]:
     current = int(now) // EPOCH_SECONDS
     sealed = []
     for epoch in store.unsealed_epochs(before=current):
-        leaf_set = store.close_epoch(epoch)  # from here on, latecomers get EpochClosed
+        leaf_set = store.close_epoch(epoch)
         tree = build_epoch_tree(decode_leaf_set(leaf_set))
         attestation = signed_attestation(signer, epoch, tree.root)
         store.seal_epoch(epoch, tree.root, serialize_attestation(attestation))
@@ -110,7 +110,7 @@ def verify_signed_receipt(digest: bytes, receipt: bytes, pubkey: bytes) -> bool:
             type(att) is ZeitwerkAttestation
             and att.anchor_type is AnchorType.WITNESS_ED25519
             and len(att.anchor_ref) == KEY_ID_SIZE + SIGNATURE_SIZE
-            and att.anchor_ref[:KEY_ID_SIZE] == key_id
+            and att.anchor_ref[:KEY_ID_SIZE] == key_id_of(pubkey)
             and att.epoch < 2**64  # the signer packs it in 8 bytes
             and Signer.verify(pubkey, att.epoch, root, att.anchor_ref[KEY_ID_SIZE:])
             and verify_receipt(digest, receipt, root)

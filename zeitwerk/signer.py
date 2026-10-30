@@ -29,7 +29,8 @@ def key_id_of(public_key: bytes) -> bytes:
 
 def _message(epoch: int, root: bytes, key_id: bytes) -> bytes:
     """What gets signed: b'zeitwerk-v0' + epoch (8 bytes) + root + key_id."""
-    return V0_PREFIX + epoch.to_bytes(8, "big") + root + key_id
+    epoch_bytes = epoch.to_bytes(8, "big")
+    return V0_PREFIX + epoch_bytes + root + key_id
 
 
 class Signer:
