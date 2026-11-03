@@ -16,6 +16,7 @@ Layout (per epoch N):
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -41,7 +42,9 @@ def epoch_path(epoch: int) -> str:
     Returns:
         The relative path string for the epoch folder.
     """
-    raise NotImplementedError("TODO: implement epoch_path")
+    from datetime import datetime, timezone
+    dt = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(hours=epoch)
+    return f"epochs/{dt.year:04d}/{dt.month:02d}/{dt.day:02d}/{dt.hour:02d}"
 
 
 def epoch_of_path(path: str | Path) -> int:
