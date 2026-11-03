@@ -183,9 +183,10 @@ class ServerUpgradeTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
+        self.data_dir = tmp.name
         self.clock = FAKE_NOW
         self.server = start(tmp.name, now=lambda: self.clock)
-        self.addCleanup(stop, self.server)
+        self.addCleanup(lambda: stop(self.server))
         self.digest = b"\x08" * 32
         request(self.server, "POST", "/digest", self.digest)
 
@@ -196,6 +197,20 @@ class ServerUpgradeTests(unittest.TestCase):
     def test_the_receipt_verifies_offline_against_get_key(self):
         self._seal_the_hour()
         _, receipt = request(self.server, "GET", "/timestamp/" + self.digest.hex())
+        _, public_key = request(self.server, "GET", "/key")
+        self.assertTrue(verify_signed_receipt(self.digest, receipt, public_key))
+
+    def test_submit_restart_closer_seals_then_verify(self):
+        """The whole of #17 the way it runs in production: no close_due by hand."""
+        _, pending = request(self.server, "POST", "/digest", self.digest)
+        epoch = pending_attestation(pending, self.digest).epoch_submit
+        stop(self.server)
+        self.clock += EPOCH_SECONDS
+        self.server = start(self.data_dir, now=lambda: self.clock)  # setUp's cleanup stops this one
+        start_closer(self.server)()  # its first run seals the hour we missed
+        status, receipt = request(self.server, "GET", "/timestamp/" + self.digest.hex())
+        self.assertEqual(status, 200)
+        self.assertEqual(pending_attestation(receipt, self.digest).epoch, epoch)
         _, public_key = request(self.server, "GET", "/key")
         self.assertTrue(verify_signed_receipt(self.digest, receipt, public_key))
 
