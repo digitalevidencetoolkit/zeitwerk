@@ -42,7 +42,6 @@ def epoch_path(epoch: int) -> str:
     Returns:
         The relative path string for the epoch folder.
     """
-    from datetime import datetime, timezone
     dt = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(hours=epoch)
     return f"epochs/{dt.year:04d}/{dt.month:02d}/{dt.day:02d}/{dt.hour:02d}"
 
@@ -60,7 +59,6 @@ def epoch_of_path(path: str | Path) -> int:
     Raises:
         ValueError: If the path doesn't match the expected format.
     """
-    from datetime import datetime, timezone
     parts = Path(path).parts
     if len(parts) < 5 or parts[-5] != "epochs":
         raise ValueError(f"Invalid epoch path: {path}")
@@ -73,15 +71,15 @@ def epoch_of_path(path: str | Path) -> int:
     delta = dt - base
     epoch = int(delta.total_seconds() // 3600)
     if epoch < 0:
-        raise ValueError(f"Epoch must (!) be non-negative, got {epoch}")
+        raise ValueError(f"Epoch must be non-negative, got {epoch}")
     return epoch
 
 
 def write_epoch(
     repo: Path,
     epoch: int,
-    leaf_set: LeafSet,
-    attestation: ZeitwerkAttestation,
+    leaf_set: bytes,
+    attestation: bytes,
 ) -> None:
     """Write all epoch files to the repository folder.
 
@@ -98,13 +96,55 @@ def write_epoch(
     Args:
         repo: Path to the repository root (where epochs/ and signers/ live).
         epoch: The epoch number.
-        leaf_set: The frozen leaf set for this epoch.
+        leaf_set: The frozen leaf set for this epoch (encoded bytes).
         attestation: The serialized attestation for this epoch.
 
     Raises:
         ValueError: If the epoch folder exists with different content.
     """
-    raise NotImplementedError("TODO: implement write_epoch")
+    from zeitwerk.epochtree import decode_leaf_set, build_epoch_tree
+
+    epoch_folder = repo / epoch_path(epoch)
+    epoch_folder.mkdir(parents=True, exist_ok=True)
+
+    # Recompute root from leaf_set to ensure consistency
+    leaves = decode_leaf_set(leaf_set)
+    tree = build_epoch_tree(leaves)
+    root = tree.root
+
+    # Define all files and their expected content
+    files = {
+        "leaves.bin": leaf_set,
+        "leaves.hex": "\n".join(leaf.hex() for leaf in leaves).encode() + b"\n",
+        "root": root,
+        "attestation": attestation,
+        "epoch.json": _epoch_json(epoch, len(leaves), root),
+    }
+
+    # Check idempotency: if folder exists, verify all files match
+    for filename, content in files.items():
+        filepath = epoch_folder / filename
+        if filepath.exists():
+            if filepath.read_bytes() != content:
+                raise ValueError(
+                    f"Epoch {epoch} folder exists with different {filename} content"
+                )
+        else:
+            filepath.write_bytes(content)
+
+
+def _epoch_json(epoch: int, leaf_count: int, root: bytes) -> bytes:
+    """Build epoch.json content with sorted keys for stable bytes."""
+    import json
+    start = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(hours=epoch)
+    end = start + timedelta(hours=1)
+    data = {
+        "epoch": epoch,
+        "interval": {"start": start.isoformat(), "end": end.isoformat()},
+        "leaf_count": leaf_count,
+        "root": root.hex(),
+    }
+    return json.dumps(data, sort_keys=True).encode()
 
 
 def write_signer(repo: Path, public_key: bytes, valid_from: int | None = None, valid_until: int | None = None) -> bytes:
@@ -128,7 +168,7 @@ def write_signer(repo: Path, public_key: bytes, valid_from: int | None = None, v
     raise NotImplementedError("TODO: implement write_signer")
 
 
-def read_epoch(repo: Path, epoch: int) -> tuple[LeafSet, bytes, bytes]:
+def read_epoch(repo: Path, epoch: int) -> tuple[bytes, bytes, bytes]:
     """Read epoch data from the repository folder.
 
     Returns the leaf set, root hash, and attestation bytes for the given epoch.
@@ -144,7 +184,24 @@ def read_epoch(repo: Path, epoch: int) -> tuple[LeafSet, bytes, bytes]:
         FileNotFoundError: If the epoch folder or any required file is missing.
         ValueError: If the files are inconsistent (e.g., root doesn't match leaf_set).
     """
-    raise NotImplementedError("TODO: implement read_epoch")
+    from zeitwerk.epochtree import decode_leaf_set, build_epoch_tree
+
+    epoch_folder = repo / epoch_path(epoch)
+
+    leaf_set = (epoch_folder / "leaves.bin").read_bytes()
+    root = (epoch_folder / "root").read_bytes()
+    attestation = (epoch_folder / "attestation").read_bytes()
+
+    # Verify consistency: root should match leaf_set
+    leaves = decode_leaf_set(leaf_set)
+    tree = build_epoch_tree(leaves)
+    if tree.root != root:
+        raise ValueError(
+            f"Epoch {epoch}: stored root {root.hex()} doesn't match "
+            f"leaf_set root {tree.root.hex()}"
+        )
+
+    return leaf_set, root, attestation
 
 
 def verify_published(repo: Path, digest: bytes, epoch: int) -> bool:
