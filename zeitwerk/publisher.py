@@ -60,7 +60,21 @@ def epoch_of_path(path: str | Path) -> int:
     Raises:
         ValueError: If the path doesn't match the expected format.
     """
-    raise NotImplementedError("TODO: implement epoch_of_path")
+    from datetime import datetime, timezone
+    parts = Path(path).parts
+    if len(parts) < 5 or parts[-5] != "epochs":
+        raise ValueError(f"Invalid epoch path: {path}")
+    try:
+        year, month, day, hour = int(parts[-4]), int(parts[-3]), int(parts[-2]), int(parts[-1])
+    except ValueError:
+        raise ValueError(f"Invalid epoch path: {path}")
+    dt = datetime(year, month, day, hour, tzinfo=timezone.utc)
+    base = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    delta = dt - base
+    epoch = int(delta.total_seconds() // 3600)
+    if epoch < 0:
+        raise ValueError(f"Epoch must (!) be non-negative, got {epoch}")
+    return epoch
 
 
 def write_epoch(
