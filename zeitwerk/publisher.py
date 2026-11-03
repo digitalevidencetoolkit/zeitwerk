@@ -165,7 +165,27 @@ def write_signer(repo: Path, public_key: bytes, valid_from: int | None = None, v
     Returns:
         The key_id (8 bytes) used as the filename prefix.
     """
-    raise NotImplementedError("TODO: implement write_signer")
+    import json
+
+    from zeitwerk.signer import key_id_of
+
+    key_id = key_id_of(public_key)
+    signers_dir = repo / "signers"
+    signers_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write .pub file
+    pub_file = signers_dir / f"{key_id.hex()}.pub"
+    pub_file.write_bytes(public_key)
+
+    # Write .json file
+    metadata = {
+        "valid_from": valid_from,
+        "valid_until": valid_until,
+    }
+    json_file = signers_dir / f"{key_id.hex()}.json"
+    json_file.write_text(json.dumps(metadata, sort_keys=True) + "\n")
+
+    return key_id
 
 
 def read_epoch(repo: Path, epoch: int) -> tuple[bytes, bytes, bytes]:
@@ -225,4 +245,31 @@ def verify_published(repo: Path, digest: bytes, epoch: int) -> bool:
         FileNotFoundError: If the epoch is not published.
         ValueError: If verification fails.
     """
-    raise NotImplementedError("TODO: implement verify_published")
+    from zeitwerk.epochtree import decode_leaf_set, build_epoch_tree, verify_inclusion
+
+    epoch_folder = repo / epoch_path(epoch)
+
+    # Check epoch folder exists
+    if not epoch_folder.exists():
+        raise FileNotFoundError(f"Epoch {epoch} not published")
+
+    # Read and verify leaf set
+    leaf_set = (epoch_folder / "leaves.bin").read_bytes()
+    root = (epoch_folder / "root").read_bytes()
+
+    leaves = decode_leaf_set(leaf_set)
+    tree = build_epoch_tree(leaves)
+
+    if tree.root != root:
+        raise ValueError(
+            f"Epoch {epoch}: stored root doesn't match leaf_set root"
+        )
+
+    # Verify inclusion
+    if not verify_inclusion(digest, leaf_set, root):
+        raise ValueError(f"Digest {digest.hex()} not in epoch {epoch} leaf set")
+
+    # TODO: Verify attestation signature against signers/ when we have
+    # the full attestation type. For now, just check inclusion.
+
+    return True
