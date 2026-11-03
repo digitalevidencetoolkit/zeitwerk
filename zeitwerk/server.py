@@ -26,7 +26,7 @@ from pathlib import Path
 from zeitwerk.epochtree import DIGEST_SIZE, check_digest
 from zeitwerk.signer import Signer
 from zeitwerk.store import EpochClosed, EpochFull, Store
-from zeitwerk.witness import EPOCH_SECONDS, close_due, pending_receipt, upgraded_receipt
+from zeitwerk.witness import EPOCH_SECONDS, close_due, publish_due, pending_receipt, upgraded_receipt
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 14788
@@ -124,6 +124,7 @@ def make_server(
     server.recover_uri = recover_uri or f"http://{bound_host}:{bound_port}"
     server.store = Store(data_dir / "zeitwerk.db")
     server.signer = Signer(data_dir / "signer.pem")
+    server.repo = data_dir / "epochs"  # quick and dirty: repo lives in data_dir
     return server
 
 
@@ -140,6 +141,7 @@ def start_closer(server: ThreadingHTTPServer, interval: float = 60.0) -> Callabl
         while True:
             try:
                 close_due(server.store, server.signer, server.now())
+                publish_due(server.store, server.signer, server.repo)
             except Exception:  # try again next time: a dead closer would strand every receipt
                 traceback.print_exc()
             if stopped.wait(interval):

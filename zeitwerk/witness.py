@@ -74,6 +74,36 @@ def close_due(store: Store, signer: Signer, now: float) -> list[int]:
     return sealed
 
 
+def publish_due(store: Store, signer: Signer, repo: str | Path) -> list[int]:
+    """Publish every sealed but unpublished epoch to the git repo.
+
+    For each epoch in store.unpublished_epochs(), write the epoch data and
+    signer key to the repo, then mark as published. Failures are logged but
+    don't block other epochs or future attempts.
+    """
+    from pathlib import Path
+    from zeitwerk.publisher import write_epoch, write_signer
+
+    repo = Path(repo)
+    published = []
+    for epoch in store.unpublished_epochs():
+        try:
+            row = store._conn.execute(
+                "SELECT leaf_set, attestation FROM epochs WHERE epoch = ?", (epoch,)
+            ).fetchone()
+            if row:
+                leaf_set, attestation_bytes = row
+                write_epoch(repo, epoch, leaf_set, attestation_bytes)
+                write_signer(repo, signer.public_key)
+                store.mark_published(epoch)
+                published.append(epoch)
+        except Exception as e:
+            # Log and continue - don't block on publish failures
+            import traceback
+            traceback.print_exc()
+    return published
+
+
 def upgraded_receipt(store: Store, digest: bytes) -> bytes | None:
     """The receipt for a sealed fingerprint, or None while pending or unknown.
 

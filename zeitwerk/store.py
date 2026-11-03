@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS epochs (
     epoch       INTEGER PRIMARY KEY,
     leaf_set    BLOB NOT NULL,  -- frozen at close
     root        BLOB,           -- NULL until sealed
-    attestation BLOB            -- NULL until sealed
+    attestation BLOB,           -- NULL until sealed
+    published   INTEGER         -- NULL until published to repo
 );
 """
 
@@ -129,6 +130,23 @@ class Store:
                 "UPDATE epochs SET root = ?, attestation = ? WHERE epoch = ?",
                 (root, attestation, epoch),
             )
+
+    def mark_published(self, epoch: int) -> None:
+        """Mark an epoch as published to the repo."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE epochs SET published = 1 WHERE epoch = ?", (epoch,)
+            )
+
+    def unpublished_epochs(self) -> list[int]:
+        """Sealed epochs that haven't been published yet, oldest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT epoch FROM epochs "
+                "WHERE attestation IS NOT NULL AND published IS NULL "
+                "ORDER BY epoch"
+            )
+            return [epoch for (epoch,) in rows]
 
     def unsealed_epochs(self, before: int) -> list[int]:
         """Hours older than `before` that have submissions but no seal, oldest first.
