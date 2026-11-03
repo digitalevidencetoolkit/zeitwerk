@@ -75,6 +75,32 @@ def epoch_of_path(path: str | Path) -> int:
     return epoch
 
 
+def epoch_files(epoch: int, leaf_set: bytes, attestation: bytes) -> dict[str, bytes]:
+    """Build all file contents for an epoch as a pure function.
+
+    Args:
+        epoch: The epoch number.
+        leaf_set: The encoded leaf set bytes.
+        attestation: The serialized attestation bytes.
+
+    Returns:
+        A dict mapping filenames to their content bytes.
+    """
+    from zeitwerk.epochtree import decode_leaf_set, build_epoch_tree
+
+    leaves = decode_leaf_set(leaf_set)
+    tree = build_epoch_tree(leaves)
+    root = tree.root
+
+    return {
+        "leaves.bin": leaf_set,
+        "leaves.hex": "\n".join(leaf.hex() for leaf in leaves).encode() + b"\n",
+        "root": root,
+        "attestation": attestation,
+        "epoch.json": _epoch_json(epoch, len(leaves), root),
+    }
+
+
 def write_epoch(
     repo: Path,
     epoch: int,
@@ -102,24 +128,10 @@ def write_epoch(
     Raises:
         ValueError: If the epoch folder exists with different content.
     """
-    from zeitwerk.epochtree import decode_leaf_set, build_epoch_tree
-
     epoch_folder = repo / epoch_path(epoch)
     epoch_folder.mkdir(parents=True, exist_ok=True)
 
-    # Recompute root from leaf_set to ensure consistency
-    leaves = decode_leaf_set(leaf_set)
-    tree = build_epoch_tree(leaves)
-    root = tree.root
-
-    # Define all files and their expected content
-    files = {
-        "leaves.bin": leaf_set,
-        "leaves.hex": "\n".join(leaf.hex() for leaf in leaves).encode() + b"\n",
-        "root": root,
-        "attestation": attestation,
-        "epoch.json": _epoch_json(epoch, len(leaves), root),
-    }
+    files = epoch_files(epoch, leaf_set, attestation)
 
     # Check idempotency: if folder exists, verify all files match
     for filename, content in files.items():
@@ -147,6 +159,24 @@ def _epoch_json(epoch: int, leaf_count: int, root: bytes) -> bytes:
     return json.dumps(data, sort_keys=True).encode()
 
 
+def signer_metadata_json(valid_from: int | None, valid_until: int | None) -> bytes:
+    """Build signer metadata JSON as a pure function.
+
+    Args:
+        valid_from: Unix timestamp when key becomes valid, or None.
+        valid_until: Unix timestamp when key expires, or None.
+
+    Returns:
+        JSON bytes with sorted keys and trailing newline.
+    """
+    import json
+    metadata = {
+        "valid_from": valid_from,
+        "valid_until": valid_until,
+    }
+    return json.dumps(metadata, sort_keys=True).encode() + b"\n"
+
+
 def write_signer(repo: Path, public_key: bytes, valid_from: int | None = None, valid_until: int | None = None) -> bytes:
     """Write a signer's public key and metadata to the repository.
 
@@ -165,8 +195,6 @@ def write_signer(repo: Path, public_key: bytes, valid_from: int | None = None, v
     Returns:
         The key_id (8 bytes) used as the filename prefix.
     """
-    import json
-
     from zeitwerk.signer import key_id_of
 
     key_id = key_id_of(public_key)
@@ -178,12 +206,8 @@ def write_signer(repo: Path, public_key: bytes, valid_from: int | None = None, v
     pub_file.write_bytes(public_key)
 
     # Write .json file
-    metadata = {
-        "valid_from": valid_from,
-        "valid_until": valid_until,
-    }
     json_file = signers_dir / f"{key_id.hex()}.json"
-    json_file.write_text(json.dumps(metadata, sort_keys=True) + "\n")
+    json_file.write_bytes(signer_metadata_json(valid_from, valid_until))
 
     return key_id
 
@@ -245,25 +269,10 @@ def verify_published(repo: Path, digest: bytes, epoch: int) -> bool:
         FileNotFoundError: If the epoch is not published.
         ValueError: If verification fails.
     """
-    from zeitwerk.epochtree import decode_leaf_set, build_epoch_tree, verify_inclusion
+    from zeitwerk.epochtree import verify_inclusion
 
-    epoch_folder = repo / epoch_path(epoch)
-
-    # Check epoch folder exists
-    if not epoch_folder.exists():
-        raise FileNotFoundError(f"Epoch {epoch} not published")
-
-    # Read and verify leaf set
-    leaf_set = (epoch_folder / "leaves.bin").read_bytes()
-    root = (epoch_folder / "root").read_bytes()
-
-    leaves = decode_leaf_set(leaf_set)
-    tree = build_epoch_tree(leaves)
-
-    if tree.root != root:
-        raise ValueError(
-            f"Epoch {epoch}: stored root doesn't match leaf_set root"
-        )
+    # Reuse read_epoch to get leaf_set and root (which already verifies consistency)
+    leaf_set, root, _ = read_epoch(repo, epoch)
 
     # Verify inclusion
     if not verify_inclusion(digest, leaf_set, root):
