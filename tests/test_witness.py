@@ -2,16 +2,21 @@
 
 import dataclasses
 import hashlib
+import shutil
+import tempfile
 import unittest
+from pathlib import Path
 
 import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
 from zeitwerk.epochtree import build_epoch_tree, encode_leaf_set, recover_receipt
+from zeitwerk.publisher import epoch_path
 from zeitwerk.signer import Signer
 from zeitwerk.store import Store
 from zeitwerk.witness import (
     EPOCH_SECONDS,
     close_due,
     pending_receipt,
+    publish_due,
     signed_attestation,
     upgraded_receipt,
     verify_signed_receipt,
@@ -123,6 +128,54 @@ class CloseDueTests(unittest.TestCase):
         self._submit(EPOCH)
         self.store.close_epoch(EPOCH)
         self.assertEqual(close_due(self.store, self.signer, _hour(EPOCH + 1)), [EPOCH])
+
+
+class PublishDueTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.addCleanup(self.store.close)
+        self.signer = Signer()
+        self.digests = _digests(3)
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(self.temp_dir, ignore_errors=True))
+
+    def _submit_and_seal(self, epoch):
+        for digest in self.digests:
+            self.store.add_submission(digest, epoch)
+        close_due(self.store, self.signer, _hour(epoch + 1))
+
+    def test_nothing_to_publish_in_an_empty_store(self):
+        self.assertEqual(publish_due(self.store, self.signer, self.temp_dir), [])
+
+    def test_publishes_a_sealed_epoch(self):
+        self._submit_and_seal(EPOCH)
+        published = publish_due(self.store, self.signer, self.temp_dir)
+        self.assertEqual(published, [EPOCH])
+        # Check folder exists
+        epoch_folder = self.temp_dir / epoch_path(EPOCH)
+        self.assertTrue(epoch_folder.exists())
+        # Check mark_published is set
+        self.assertEqual(self.store.unpublished_epochs(), [])
+
+    def test_second_call_has_nothing_left_to_publish(self):
+        self._submit_and_seal(EPOCH)
+        publish_due(self.store, self.signer, self.temp_dir)
+        self.assertEqual(publish_due(self.store, self.signer, self.temp_dir), [])
+
+    def test_skips_a_failing_epoch_but_publishes_the_next(self):
+        """A failing epoch (e.g., conflicting folder) is skipped, the next one still publishes."""
+        self._submit_and_seal(EPOCH)
+        self._submit_and_seal(EPOCH + 1)
+        # Create a conflicting folder for EPOCH to simulate a failure
+        epoch_folder = self.temp_dir / epoch_path(EPOCH)
+        epoch_folder.mkdir(parents=True, exist_ok=True)
+        # Write a different file to cause a conflict
+        (epoch_folder / "leaves.bin").write_bytes(b"conflict")
+        # publish_due should skip EPOCH but still publish EPOCH + 1
+        published = publish_due(self.store, self.signer, self.temp_dir)
+        self.assertEqual(published, [EPOCH + 1])
+        # EPOCH should still be unpublished
+        self.assertEqual(self.store.unpublished_epochs(), [EPOCH])
 
 
 class UpgradedReceiptTests(unittest.TestCase):

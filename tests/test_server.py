@@ -256,6 +256,26 @@ class CloserTests(unittest.TestCase):
             self.addCleanup(start_closer(self.server, interval=0.001))
             self.assertTrue(second_run.wait(timeout=5))
 
+    def test_publish_failure_does_not_stop_sealing(self):
+        """A publish failure doesn't stop sealing (and closing) in the next tick."""
+        digest = b"\x0b" * 32
+        request(self.server, "POST", "/digest", digest)
+        self.clock += EPOCH_SECONDS  # now at epoch 8
+        # Make publish_due fail
+        def failing_publish_due(store, signer, repo):
+            raise RuntimeError("Publish failed")
+        with mock.patch("zeitwerk.server.publish_due", failing_publish_due), \
+                contextlib.redirect_stderr(io.StringIO()):  # the traceback it prints
+            start_closer(self.server)()  # first run: close succeeds, publish fails
+        # The hour should still be sealed
+        self.assertIsNotNone(self.server.store.sealed_epoch(7))
+        # Next hour: submit to epoch 8 and advance clock to epoch 9
+        request(self.server, "POST", "/digest", b"\x0c" * 32)
+        self.clock += EPOCH_SECONDS  # now at epoch 9
+        # Call close_due directly for epoch 8
+        close_due(self.server.store, self.server.signer, self.clock)
+        self.assertIsNotNone(self.server.store.sealed_epoch(8))
+
 
 class ServerRefusalTests(unittest.TestCase):
     """When the store turns a submission away, the client still gets an answer."""

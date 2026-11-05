@@ -176,6 +176,61 @@ class StoreUnsealedEpochsTests(unittest.TestCase):
         self.assertEqual(self.store.unsealed_epochs(before=EPOCH2), [])
 
 
+class StoreSealedEpochTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.addCleanup(self.store.close)
+
+    def test_unknown_epoch_is_none(self):
+        self.assertIsNone(self.store.sealed_epoch(EPOCH))
+
+    def test_closed_but_unsealed_is_none(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        self.store.close_epoch(EPOCH)
+        self.assertIsNone(self.store.sealed_epoch(EPOCH))
+
+    def test_sealed_epoch_returns_leaf_set_and_attestation(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        attestation = _seal(self.store, EPOCH)
+        leaf_set, returned_attestation = self.store.sealed_epoch(EPOCH)
+        self.assertEqual(leaf_set, DIGEST)
+        self.assertEqual(returned_attestation, attestation)
+
+
+class StorePublishTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.addCleanup(self.store.close)
+
+    def test_empty_store_has_nothing_to_publish(self):
+        self.assertEqual(self.store.unpublished_epochs(), [])
+
+    def test_sealed_epoch_is_unpublished(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        _seal(self.store, EPOCH)
+        self.assertEqual(self.store.unpublished_epochs(), [EPOCH])
+
+    def test_published_epoch_is_not_listed(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        _seal(self.store, EPOCH)
+        self.store.mark_published(EPOCH)
+        self.assertEqual(self.store.unpublished_epochs(), [])
+
+    def test_multiple_sealed_epochs_oldest_first(self):
+        self.store.add_submission(DIGEST, EPOCH2)
+        self.store.add_submission(DIGEST, EPOCH)
+        _seal(self.store, EPOCH)
+        _seal(self.store, EPOCH2)
+        self.assertEqual(self.store.unpublished_epochs(), [EPOCH, EPOCH2])
+
+    def test_mark_published_is_idempotent(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        _seal(self.store, EPOCH)
+        self.store.mark_published(EPOCH)
+        self.store.mark_published(EPOCH)  # second call is a no-op
+        self.assertEqual(self.store.unpublished_epochs(), [])
+
+
 class StoreSealedForTests(unittest.TestCase):
     def setUp(self):
         self.store = Store(":memory:")
