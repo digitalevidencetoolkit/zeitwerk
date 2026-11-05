@@ -7,6 +7,7 @@ a signed receipt.
 
 from __future__ import annotations
 
+from pathlib import Path
 from opentimestamps.core.serialize import (
     BytesDeserializationContext,
     BytesSerializationContext,
@@ -81,24 +82,21 @@ def publish_due(store: Store, signer: Signer, repo: str | Path) -> list[int]:
     signer key to the repo, then mark as published. Failures are logged but
     don't block other epochs or future attempts.
     """
-    from pathlib import Path
     from zeitwerk.publisher import write_epoch, write_signer
 
     repo = Path(repo)
     published = []
+    # Write signer once per call
+    write_signer(repo, signer.public_key)
     for epoch in store.unpublished_epochs():
         try:
-            row = store._conn.execute(
-                "SELECT leaf_set, attestation FROM epochs WHERE epoch = ?", (epoch,)
-            ).fetchone()
-            if row:
-                leaf_set, attestation_bytes = row
+            sealed = store.sealed_epoch(epoch)
+            if sealed is not None:
+                leaf_set, attestation_bytes = sealed
                 write_epoch(repo, epoch, leaf_set, attestation_bytes)
-                write_signer(repo, signer.public_key)
                 store.mark_published(epoch)
                 published.append(epoch)
-        except Exception as e:
-            # Log and continue - don't block on publish failures
+        except Exception:
             import traceback
             traceback.print_exc()
     return published
