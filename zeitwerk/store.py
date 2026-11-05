@@ -166,6 +166,16 @@ class Store:
             )
             return [epoch for (epoch,) in rows]
 
+    def sealed_epoch(self, epoch: int) -> tuple[bytes, bytes] | None:
+        """Return (leaf_set, attestation) for a sealed epoch, or None.
+        Returns the pair once sealed (attestation IS NOT NULL) and None otherwise.
+        """
+        with self._lock:
+            return self._conn.execute(
+                "SELECT leaf_set, attestation FROM epochs WHERE epoch = ? AND attestation IS NOT NULL",
+                (epoch,),
+            ).fetchone()
+
     def sealed_for(self, digest: bytes) -> tuple[bytes, bytes] | None:
         """The earliest sealed hour holding this fingerprint, or None.
 
