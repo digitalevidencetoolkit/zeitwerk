@@ -131,7 +131,8 @@ class PushTests(unittest.TestCase):
         (self.temp_dir / epoch_path(7) / "leaves.bin").write_text("test")
         commit(self.temp_dir, 7)
         push(self.temp_dir)
-        result = subprocess.run(["git", "-C", str(bare_dir), "log", "-1", "--pretty=%B"], capture_output=True, text=True)
+        # The bare repo's HEAD may point at `master` (depends on init.defaultBranch), so name the branch.
+        result = subprocess.run(["git", "-C", str(bare_dir), "log", "-1", "--pretty=%B", "main"], capture_output=True, text=True)
         self.assertEqual(result.stdout.strip(), "epoch 7 (1970-01-01 07:00 UTC)")
 
     def test_nonexistent_remote_reported_good_one_still_pushes(self):

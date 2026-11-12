@@ -201,7 +201,7 @@ class PublishDueTests(unittest.TestCase):
 
         # Check that both commits arrived at the remote (newest first in git log)
         result = subprocess.run(
-            ["git", "-C", str(bare_dir), "log", "--pretty=%s"],
+            ["git", "-C", str(bare_dir), "log", "--pretty=%s", "main"],
             capture_output=True,
             text=True,
         )
