@@ -138,6 +138,8 @@ class PublishDueTests(unittest.TestCase):
         self.digests = _digests(3)
         self.temp_dir = Path(tempfile.mkdtemp())
         self.addCleanup(lambda: shutil.rmtree(self.temp_dir, ignore_errors=True))
+        from zeitwerk.gitrepo import ensure_repo
+        ensure_repo(self.temp_dir)
 
     def _submit_and_seal(self, epoch):
         for digest in self.digests:
@@ -176,6 +178,37 @@ class PublishDueTests(unittest.TestCase):
         self.assertEqual(published, [EPOCH + 1])
         # EPOCH should still be unpublished
         self.assertEqual(self.store.unpublished_epochs(), [EPOCH])
+
+    def test_two_sealed_hours_two_commits_in_order(self):
+        """Two sealed hours result in two commits in order, bare remote has both."""
+        import subprocess
+        from zeitwerk.gitrepo import push
+
+        # Create a bare repo to use as remote
+        bare_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(bare_dir, ignore_errors=True))
+        subprocess.run(["git", "init", "--bare", str(bare_dir)], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.temp_dir), "remote", "add", "origin", str(bare_dir)], check=True)
+
+        # Seal and publish two hours
+        self._submit_and_seal(EPOCH)
+        self._submit_and_seal(EPOCH + 1)
+        published = publish_due(self.store, self.signer, self.temp_dir)
+        self.assertEqual(published, [EPOCH, EPOCH + 1])
+
+        # Push to remote
+        push(self.temp_dir)
+
+        # Check that both commits arrived at the remote (newest first in git log)
+        result = subprocess.run(
+            ["git", "-C", str(bare_dir), "log", "--pretty=%s"],
+            capture_output=True,
+            text=True,
+        )
+        commits = result.stdout.strip().split('\n')
+        self.assertEqual(len(commits), 2)
+        self.assertEqual(commits[0], f"epoch {EPOCH + 1} (1970-01-01 08:00 UTC)")
+        self.assertEqual(commits[1], f"epoch {EPOCH} (1970-01-01 07:00 UTC)")
 
 
 class UpgradedReceiptTests(unittest.TestCase):

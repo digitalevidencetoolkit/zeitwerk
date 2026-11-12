@@ -124,7 +124,9 @@ def make_server(
     server.recover_uri = recover_uri or f"http://{bound_host}:{bound_port}"
     server.store = Store(data_dir / "zeitwerk.db")
     server.signer = Signer(data_dir / "signer.pem")
-    server.repo = data_dir / "epochs"  # quick and dirty: repo lives in data_dir
+    server.repo = data_dir / "repo"
+    from zeitwerk.gitrepo import ensure_repo
+    ensure_repo(server.repo)
     return server
 
 

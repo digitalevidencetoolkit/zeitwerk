@@ -17,6 +17,7 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 def ensure_repo(repo: Path) -> None:
     """Initialize a git repository at `repo` with a main branch if it doesn't exist."""
+    repo.mkdir(parents=True, exist_ok=True)
     if not (repo / ".git").exists():
         _git(repo, "init", "-b", "main")
 

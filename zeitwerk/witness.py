@@ -7,6 +7,7 @@ a signed receipt.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from opentimestamps.core.serialize import (
     BytesDeserializationContext,
@@ -29,6 +30,7 @@ from zeitwerk.epochtree import (
     recover_receipt,
     verify_receipt,
 )
+from zeitwerk.gitrepo import commit, push
 from zeitwerk.signer import KEY_ID_SIZE, Signer, key_id_of
 from zeitwerk.store import Store
 
@@ -79,8 +81,9 @@ def publish_due(store: Store, signer: Signer, repo: str | Path) -> list[int]:
     """Publish every sealed but unpublished epoch to the git repo.
 
     For each epoch in store.unpublished_epochs(), write the epoch data and
-    signer key to the repo, then mark as published. Failures are logged but
-    don't block other epochs or future attempts.
+    signer key to the repo, commit to git, then mark as published. After all
+    epochs are processed, push to all remotes. Failures are logged but don't
+    block other epochs or future attempts.
     """
     from zeitwerk.publisher import write_epoch, write_signer
 
@@ -94,11 +97,18 @@ def publish_due(store: Store, signer: Signer, repo: str | Path) -> list[int]:
             if sealed is not None:
                 leaf_set, attestation_bytes = sealed
                 write_epoch(repo, epoch, leaf_set, attestation_bytes)
+                commit(repo, epoch)
                 store.mark_published(epoch)
                 published.append(epoch)
-        except Exception:
-            import traceback
-            traceback.print_exc()
+        except Exception as e:
+            logging.exception(f"Failed to publish epoch {epoch}: {e}")
+    
+    # Push to all remotes once after processing all epochs
+    if published:
+        push_result = push(repo)
+        if push_result:
+            logging.info(f"Push results: {push_result}")
+    
     return published
 
 
