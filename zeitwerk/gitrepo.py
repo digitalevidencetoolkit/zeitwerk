@@ -26,7 +26,7 @@ def commit(repo: Path, epoch: int) -> bool:
 
     # Stage only the specific epoch folder and signers/ directory
     from zeitwerk.publisher import epoch_path
-    
+
     files_to_add = []
     epoch_folder = epoch_path(epoch)
     if (repo / epoch_folder).exists():
@@ -54,3 +54,71 @@ def commit(repo: Path, epoch: int) -> bool:
 
     _git(repo, "commit", "-m", message)
     return True
+
+
+def push(repo: Path, timeout: float = 30.0) -> dict[str, str | None]:
+    """Push main to every remote that has new commits.
+    For each git remote, check if there are new commits on main that the remote
+    doesn't have using `rev-list --count <remote>/main..main`. If count is 0,
+    skip that remote. Otherwise, push to it.
+    Args:
+        repo: Path to the git repository.
+        timeout: Timeout in seconds for each git operation.
+
+    Returns:
+        A dict mapping remote names to their stderr output (if any error occurred),
+        or None if the push succeeded. Remotes with no new commits are not included.
+    """
+    from subprocess import CalledProcessError, TimeoutExpired
+
+    result: dict[str, str | None] = {}
+
+    # Get list of remotes
+    try:
+        remote_list = subprocess.run(
+            ["git", "-C", str(repo), "remote"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=True,
+        )
+        remotes = remote_list.stdout.strip().split('\n')
+    except (CalledProcessError, TimeoutExpired):
+        # If we can't even list remotes, return empty dict
+        return {}
+
+    for remote in remotes:
+        if not remote:
+            continue
+
+        # Check if there are new commits: rev-list --count remote/main..main
+        # If count is 0, skip this remote?
+        try:
+            count_result = subprocess.run(
+                ["git", "-C", str(repo), "rev-list", "--count", f"{remote}/main..main"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=True,
+            )
+            count = int(count_result.stdout.strip())
+            if count == 0:
+                # No new commits, skip
+                continue
+        except (CalledProcessError, TimeoutExpired, ValueError):
+            # If we can't check the count, try to push anyway
+            pass
+
+        try:
+            subprocess.run(
+                ["git", "-C", str(repo), "push", remote, "main"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=True,
+            )
+            result[remote] = None  # Success
+        except (CalledProcessError, TimeoutExpired) as e:
+            result[remote] = e.stderr if isinstance(e, CalledProcessError) else str(e)
+
+    return result
