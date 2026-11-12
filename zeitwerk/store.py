@@ -37,6 +37,12 @@ CREATE TABLE IF NOT EXISTS epochs (
 );
 """
 
+# Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves an
+# existing table alone, so each one is added here if it is missing. Append only.
+ADDED_COLUMNS = [
+    ("epochs", "published", "INTEGER"),  # feat/publishing, Nov 2026
+]
+
 
 class EpochClosed(Exception):
     """The hour has closed: submit to the current one instead."""
@@ -57,8 +63,17 @@ class Store:
             raise ValueError(f"max_leaves must be in 1..{MAX_LEAVES}, got {max_leaves}")
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._lock = threading.Lock()  # one transaction at a time
         self._max_leaves = max_leaves
+
+    def _migrate(self) -> None:
+        """Bring a database created by an older version up to SCHEMA."""
+        with self._conn:
+            for table, column, type_ in ADDED_COLUMNS:
+                present = {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+                if column not in present:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {type_}")
 
     def close(self) -> None:
         """Close the database connection (not an epoch: see close_epoch)."""

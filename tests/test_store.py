@@ -1,10 +1,17 @@
 """Tests for the SQLite store."""
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from zeitwerk.store import Store, EpochClosed, EpochFull
+
+# The epochs table as the witness server v0 (#17) created it: no `published` column.
+SCHEMA_BEFORE_PUBLISHING = """
+CREATE TABLE submissions (digest BLOB NOT NULL, epoch INTEGER NOT NULL, PRIMARY KEY (digest, epoch));
+CREATE TABLE epochs (epoch INTEGER PRIMARY KEY, leaf_set BLOB NOT NULL, root BLOB, attestation BLOB);
+"""
 
 DIGEST = b"\x01" * 32
 DIGEST2 = b"\x02" * 32
@@ -25,6 +32,17 @@ class StoreOpenTests(unittest.TestCase):
     def test_reopening_an_existing_store_works(self):
         Store(self.path).close()
         Store(self.path).close()  # raises if the schema can't be applied twice
+
+    def test_a_database_from_before_publishing_gains_the_published_column(self):
+        """Sealed hours in a pre-upgrade database come out as unpublished, not as an error."""
+        with sqlite3.connect(self.path) as conn:
+            conn.executescript(SCHEMA_BEFORE_PUBLISHING)
+            conn.execute("INSERT INTO epochs VALUES (?, ?, ?, ?)", (EPOCH, DIGEST, b"r" * 32, b"att"))
+        store = Store(self.path)
+        self.addCleanup(store.close)
+        self.assertEqual(store.unpublished_epochs(), [EPOCH])
+        store.mark_published(EPOCH)
+        self.assertEqual(store.unpublished_epochs(), [])
 
 
 class StoreSubmissionTests(unittest.TestCase):
