@@ -267,18 +267,31 @@ def verify_published(repo: Path, digest: bytes, epoch: int) -> bool:
 
     Raises:
         FileNotFoundError: If the epoch is not published.
-        ValueError: If verification fails.
+        ValueError: If verification fails, saying which check did.
     """
+    from zeitwerk.attestation import AnchorType, ZeitwerkAttestation, deserialize_attestation
     from zeitwerk.epochtree import verify_inclusion
+    from zeitwerk.signer import KEY_ID_SIZE, Signer
 
     # Reuse read_epoch to get leaf_set and root (which already verifies consistency)
-    leaf_set, root, _ = read_epoch(repo, epoch)
+    leaf_set, root, attestation = read_epoch(repo, epoch)
 
     # Verify inclusion
     if not verify_inclusion(digest, leaf_set, root):
         raise ValueError(f"Digest {digest.hex()} not in epoch {epoch} leaf set")
 
-    # TODO: Verify attestation signature against signers/ when we have
-    # the full attestation type. For now, just check inclusion.
+    # Verify the signature: the attestation names its signer by key_id, the
+    # key is in signers/, and the signature covers this epoch and this root.
+    att = deserialize_attestation(attestation)
+    if type(att) is not ZeitwerkAttestation or att.anchor_type is not AnchorType.WITNESS_ED25519:
+        raise ValueError(f"Epoch {epoch}: attestation is not a witness signature")
+    if att.epoch != epoch:
+        raise ValueError(f"Epoch {epoch}: attestation is for epoch {att.epoch}")
+    key_id, signature = att.anchor_ref[:KEY_ID_SIZE], att.anchor_ref[KEY_ID_SIZE:]
+    pub_file = repo / "signers" / f"{key_id.hex()}.pub"
+    if not pub_file.exists():
+        raise ValueError(f"Epoch {epoch}: signer {key_id.hex()} not in signers/")
+    if not Signer.verify(pub_file.read_bytes(), epoch, root, signature):
+        raise ValueError(f"Epoch {epoch}: signature by {key_id.hex()} does not verify")
 
     return True

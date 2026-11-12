@@ -80,29 +80,63 @@ class WriteSignerTests(unittest.TestCase):
 
 
 class VerifyPublishedTests(unittest.TestCase):
-    """Tests for verify_published."""
+    """verify_published: the third-party check, from the published folder and signers/ alone."""
+
+    EPOCH = 7
 
     def setUp(self):
-        self.temp_dir = Path(tempfile.mkdtemp())
-
-    def tearDown(self):
-        import shutil
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
-
-    def test_verify_included_digest(self):
-        """verify_published returns True for an included digest."""
         import hashlib
-        digests = [hashlib.sha256(i.to_bytes(4, "big")).digest() for i in range(3)]
+        import shutil
         from zeitwerk.epochtree import build_epoch_tree, encode_leaf_set
         from zeitwerk.signer import Signer
-        tree = build_epoch_tree(digests)
-        leaf_set = encode_leaf_set(tree.leaves)
-        signer = Signer()
 
-        write_epoch(self.temp_dir, 7, leaf_set, b"attestation")
-        write_signer(self.temp_dir, signer.public_key)
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(self.temp_dir, ignore_errors=True))
+        self.digests = [hashlib.sha256(i.to_bytes(4, "big")).digest() for i in range(3)]
+        tree = build_epoch_tree(self.digests)
+        self.leaf_set = encode_leaf_set(tree.leaves)
+        self.root = tree.root
+        self.signer = Signer()
 
-        self.assertTrue(verify_published(self.temp_dir, digests[0], 7))
+    def _publish(self, attestation_epoch=EPOCH, root=None, signer=None):
+        """Write the epoch, signed as the witness does it, plus the signer's key."""
+        from zeitwerk.attestation import serialize_attestation
+        from zeitwerk.witness import signed_attestation
+
+        signer = signer or self.signer
+        attestation = signed_attestation(signer, attestation_epoch, root or self.root)
+        write_epoch(self.temp_dir, self.EPOCH, self.leaf_set, serialize_attestation(attestation))
+        write_signer(self.temp_dir, self.signer.public_key)
+
+    def test_verify_included_digest(self):
+        self._publish()
+        self.assertTrue(verify_published(self.temp_dir, self.digests[0], self.EPOCH))
+
+    def test_a_digest_not_in_the_set_fails(self):
+        self._publish()
+        with self.assertRaisesRegex(ValueError, "not in epoch"):
+            verify_published(self.temp_dir, b"\x00" * 32, self.EPOCH)
+
+    def test_an_unknown_signer_fails(self):
+        from zeitwerk.signer import Signer
+
+        self._publish(signer=Signer())  # signed by a key that is not in signers/
+        with self.assertRaisesRegex(ValueError, "not in signers/"):
+            verify_published(self.temp_dir, self.digests[0], self.EPOCH)
+
+    def test_a_signature_over_another_root_fails(self):
+        self._publish(root=b"\xff" * 32)
+        with self.assertRaisesRegex(ValueError, "does not verify"):
+            verify_published(self.temp_dir, self.digests[0], self.EPOCH)
+
+    def test_an_attestation_for_another_epoch_fails(self):
+        self._publish(attestation_epoch=self.EPOCH + 1)
+        with self.assertRaisesRegex(ValueError, "is for epoch 8"):
+            verify_published(self.temp_dir, self.digests[0], self.EPOCH)
+
+    def test_an_unpublished_epoch_is_not_found(self):
+        with self.assertRaises(FileNotFoundError):
+            verify_published(self.temp_dir, self.digests[0], self.EPOCH)
 
 
 if __name__ == "__main__":
