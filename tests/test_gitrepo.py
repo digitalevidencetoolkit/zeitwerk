@@ -10,11 +10,8 @@ from pathlib import Path
 
 import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
 
-try:
-    from zeitwerk.gitrepo import commit, ensure_repo
-    HAS_GIT = shutil.which("git") is not None
-except ImportError:
-    HAS_GIT = False
+from zeitwerk.gitrepo import commit, ensure_repo
+HAS_GIT = shutil.which("git") is not None
 
 
 @unittest.skipUnless(HAS_GIT, "git not available")
@@ -38,15 +35,19 @@ class GitRepoTests(unittest.TestCase):
 
     def test_commit_creates_a_commit(self):
         ensure_repo(self.temp_dir)
-        # Create a file to commit
-        (self.temp_dir / "epochs").mkdir()
-        (self.temp_dir / "epochs" / "test.txt").write_text("test")
+        # Create a file to commit in the proper epoch folder
+        from zeitwerk.publisher import epoch_path
+        epoch_folder = self.temp_dir / epoch_path(7)
+        epoch_folder.mkdir(parents=True)
+        (epoch_folder / "leaves.bin").write_text("test")
         self.assertTrue(commit(self.temp_dir, 7))
 
     def test_commit_message_format(self):
         ensure_repo(self.temp_dir)
-        (self.temp_dir / "epochs").mkdir()
-        (self.temp_dir / "epochs" / "test.txt").write_text("test")
+        from zeitwerk.publisher import epoch_path
+        epoch_folder = self.temp_dir / epoch_path(7)
+        epoch_folder.mkdir(parents=True)
+        (epoch_folder / "leaves.bin").write_text("test")
         commit(self.temp_dir, 7)
         # Check the commit message
         import subprocess
@@ -60,10 +61,39 @@ class GitRepoTests(unittest.TestCase):
 
     def test_second_commit_is_a_no_op(self):
         ensure_repo(self.temp_dir)
-        (self.temp_dir / "epochs").mkdir()
-        (self.temp_dir / "epochs" / "test.txt").write_text("test")
+        from zeitwerk.publisher import epoch_path
+        epoch_folder = self.temp_dir / epoch_path(7)
+        epoch_folder.mkdir(parents=True)
+        (epoch_folder / "leaves.bin").write_text("test")
         commit(self.temp_dir, 7)
         self.assertFalse(commit(self.temp_dir, 7))
+
+    def test_unrelated_file_not_in_commit(self):
+        """An unrelated file at the repo root should not be swept into the commit."""
+        ensure_repo(self.temp_dir)
+        # Create epoch folder using the proper path
+        from zeitwerk.publisher import epoch_path
+        epoch_folder = self.temp_dir / epoch_path(7)
+        epoch_folder.mkdir(parents=True)
+        (epoch_folder / "leaves.bin").write_text("test")
+        # Create an unrelated file at repo root
+        (self.temp_dir / "unrelated.txt").write_text("should not be committed")
+        
+        # Commit the epoch
+        commit(self.temp_dir, 7)
+        
+        # Check that unrelated.txt is not in the commit
+        import subprocess
+        result = subprocess.run(
+            ["git", "-C", str(self.temp_dir), "show", "--name-only", "--pretty=format:"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        committed_files = result.stdout.strip().split('\n')
+        self.assertNotIn("unrelated.txt", committed_files)
+        # The epoch folder should be in the commit
+        self.assertTrue(any("epochs" in f for f in committed_files))
 
 
 if __name__ == "__main__":
