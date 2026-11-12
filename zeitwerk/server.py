@@ -16,9 +16,9 @@ and the signing key, so a restart loses nothing.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
-import traceback
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -145,7 +145,7 @@ def start_closer(server: ThreadingHTTPServer, interval: float = 60.0) -> Callabl
                 close_due(server.store, server.signer, server.now())
                 publish_due(server.store, server.signer, server.repo)
             except Exception:  # try again next time: a dead closer would strand every receipt
-                traceback.print_exc()
+                logging.exception("closer: this run failed")
             if stopped.wait(interval):
                 return
 

@@ -81,9 +81,10 @@ def publish_due(store: Store, signer: Signer, repo: str | Path) -> list[int]:
     """Publish every sealed but unpublished epoch to the git repo.
 
     For each epoch in store.unpublished_epochs(), write the epoch data and
-    signer key to the repo, commit to git, then mark as published. After all
-    epochs are processed, push to all remotes. Failures are logged but don't
-    block other epochs or future attempts.
+    signer key to the repo, commit to git, then mark as published. Then push
+    to every remote: a no-op when nothing is new, so a push that failed last
+    time is retried every call. Failures are logged but don't block other
+    epochs or future attempts.
     """
     from zeitwerk.publisher import write_epoch, write_signer
 
@@ -102,13 +103,9 @@ def publish_due(store: Store, signer: Signer, repo: str | Path) -> list[int]:
                 published.append(epoch)
         except Exception as e:
             logging.exception(f"Failed to publish epoch {epoch}: {e}")
-    
-    # Push to all remotes once after processing all epochs
-    if published:
-        push_result = push(repo)
-        if push_result:
-            logging.info(f"Push results: {push_result}")
-    
+    for remote, error in push(repo).items():
+        if error is not None:
+            logging.warning(f"Push to {remote} failed: {error.strip()}")
     return published
 
 

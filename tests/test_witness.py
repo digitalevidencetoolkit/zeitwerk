@@ -210,6 +210,17 @@ class PublishDueTests(unittest.TestCase):
         self.assertEqual(commits[0], f"epoch {EPOCH + 1} (1970-01-01 08:00 UTC)")
         self.assertEqual(commits[1], f"epoch {EPOCH} (1970-01-01 07:00 UTC)")
 
+    def test_a_failed_push_is_warned_about_and_retried_next_call(self):
+        import subprocess
+
+        subprocess.run(["git", "-C", str(self.temp_dir), "remote", "add", "bad", "/nonexistent"], check=True)
+        self._submit_and_seal(EPOCH)
+        with self.assertLogs(level="WARNING") as logs:
+            self.assertEqual(publish_due(self.store, self.signer, self.temp_dir), [EPOCH])
+        self.assertIn("Push to bad failed", logs.output[0])
+        with self.assertLogs(level="WARNING"):  # nothing new to publish, the push is still retried
+            self.assertEqual(publish_due(self.store, self.signer, self.temp_dir), [])
+
 
 class UpgradedReceiptTests(unittest.TestCase):
     def setUp(self):

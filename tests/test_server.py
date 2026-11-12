@@ -252,7 +252,7 @@ class CloserTests(unittest.TestCase):
             return []
 
         with mock.patch("zeitwerk.server.close_due", flaky_close_due), \
-                contextlib.redirect_stderr(io.StringIO()):  # the traceback it prints
+                contextlib.redirect_stderr(io.StringIO()):  # the error it logs
             self.addCleanup(start_closer(self.server, interval=0.001))
             self.assertTrue(second_run.wait(timeout=5))
 
@@ -265,7 +265,7 @@ class CloserTests(unittest.TestCase):
         def failing_publish_due(store, signer, repo):
             raise RuntimeError("Publish failed")
         with mock.patch("zeitwerk.server.publish_due", failing_publish_due), \
-                contextlib.redirect_stderr(io.StringIO()):  # the traceback it prints
+                contextlib.redirect_stderr(io.StringIO()):  # the error it logs
             start_closer(self.server)()  # first run: close succeeds, publish fails
         # The hour should still be sealed
         self.assertIsNotNone(self.server.store.sealed_epoch(7))
