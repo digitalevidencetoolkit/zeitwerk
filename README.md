@@ -47,7 +47,7 @@ For legal and compliance use cases, we offer paid affidavits (around €5) as a 
 - [x] Epoch tree and aggregator; inclusion and non-inclusion; receipt recovery from a published list ([#15](https://github.com/digitalevidencetoolkit/zeitwerk/pull/15))
 - [x] Trust anchor ([#1](https://github.com/digitalevidencetoolkit/zeitwerk/issues/1)), hourly epoch ([#2](https://github.com/digitalevidencetoolkit/zeitwerk/issues/2)), git as   publication target ([#3](https://github.com/digitalevidencetoolkit/zeitwerk/issues/3))
 - [x] Witness server with a single Ed25519 signer: `POST /digest`, `GET /timestamp/<hash>`, `GET /key` ([#17](https://github.com/digitalevidencetoolkit/zeitwerk/issues/17))
-- [ ] WIP October:  — hourly publishing and `/recover`
+- [ ] WIP November: hourly publishing to git, `GET /recover`, third-party verification from the published folder ([#22](https://github.com/digitalevidencetoolkit/zeitwerk/issues/22), [#24](https://github.com/digitalevidencetoolkit/zeitwerk/pull/24)) — code in, awaiting a real hour against a public remote ([#23](https://github.com/digitalevidencetoolkit/zeitwerk/issues/23))
 - [ ] November: written proof format spec, CLI verifier, N-of-M growth, public testnet?
 
 ⚠️ Receipts are not stable yet: the attestation tags are placeholders for now, so don't rely on anything Zeitwerk issues today.
