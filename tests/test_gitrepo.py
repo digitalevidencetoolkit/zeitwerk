@@ -4,13 +4,14 @@ Tests are skipped if git is not available on the system.
 """
 
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
 
-from zeitwerk.gitrepo import commit, ensure_repo
+from zeitwerk.gitrepo import commit, ensure_repo, push
 HAS_GIT = shutil.which("git") is not None
 
 
@@ -94,6 +95,59 @@ class GitRepoTests(unittest.TestCase):
         self.assertNotIn("unrelated.txt", committed_files)
         # The epoch folder should be in the commit
         self.assertTrue(any("epochs" in f for f in committed_files))
+
+
+@unittest.skipUnless(HAS_GIT, "git not available")
+class PushTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(self.temp_dir, ignore_errors=True))
+
+    def test_no_remotes_returns_empty_dict(self):
+        ensure_repo(self.temp_dir)
+        self.assertEqual(push(self.temp_dir), {})
+
+    def test_second_push_with_nothing_new_does_nothing(self):
+        bare_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(bare_dir, ignore_errors=True))
+        subprocess.run(["git", "init", "--bare", str(bare_dir)], check=True, capture_output=True)
+        ensure_repo(self.temp_dir)
+        subprocess.run(["git", "-C", str(self.temp_dir), "remote", "add", "origin", str(bare_dir)], check=True)
+        from zeitwerk.publisher import epoch_path
+        (self.temp_dir / epoch_path(7)).mkdir(parents=True)
+        (self.temp_dir / epoch_path(7) / "leaves.bin").write_text("test")
+        commit(self.temp_dir, 7)
+        push(self.temp_dir)
+        self.assertEqual(push(self.temp_dir), {})
+
+    def test_commit_arrives_at_remote(self):
+        bare_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(bare_dir, ignore_errors=True))
+        subprocess.run(["git", "init", "--bare", str(bare_dir)], check=True, capture_output=True)
+        ensure_repo(self.temp_dir)
+        subprocess.run(["git", "-C", str(self.temp_dir), "remote", "add", "origin", str(bare_dir)], check=True)
+        from zeitwerk.publisher import epoch_path
+        (self.temp_dir / epoch_path(7)).mkdir(parents=True)
+        (self.temp_dir / epoch_path(7) / "leaves.bin").write_text("test")
+        commit(self.temp_dir, 7)
+        push(self.temp_dir)
+        result = subprocess.run(["git", "-C", str(bare_dir), "log", "-1", "--pretty=%B"], capture_output=True, text=True)
+        self.assertEqual(result.stdout.strip(), "epoch 7 (1970-01-01 07:00 UTC)")
+
+    def test_nonexistent_remote_reported_good_one_still_pushes(self):
+        bare_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(bare_dir, ignore_errors=True))
+        subprocess.run(["git", "init", "--bare", str(bare_dir)], check=True, capture_output=True)
+        ensure_repo(self.temp_dir)
+        subprocess.run(["git", "-C", str(self.temp_dir), "remote", "add", "origin", str(bare_dir)], check=True)
+        subprocess.run(["git", "-C", str(self.temp_dir), "remote", "add", "bad", "/nonexistent"], check=True)
+        from zeitwerk.publisher import epoch_path
+        (self.temp_dir / epoch_path(7)).mkdir(parents=True)
+        (self.temp_dir / epoch_path(7) / "leaves.bin").write_text("test")
+        commit(self.temp_dir, 7)
+        result = push(self.temp_dir)
+        self.assertIsNone(result["origin"])
+        self.assertIsNotNone(result["bad"])
 
 
 if __name__ == "__main__":
