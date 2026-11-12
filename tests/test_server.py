@@ -19,7 +19,7 @@ from opentimestamps.core.timestamp import Timestamp
 from zeitwerk import ZeitwerkPendingAttestation, deserialize_attestation, serialize_attestation
 from zeitwerk.server import Handler, make_server, start_closer
 from zeitwerk.store import Store
-from zeitwerk.witness import EPOCH_SECONDS, close_due, verify_signed_receipt
+from zeitwerk.witness import EPOCH_SECONDS, close_due, publish_due, verify_signed_receipt
 
 FAKE_NOW = 7 * 3600 + 12  # 07:00:12 UTC on 1 January 1970, so epoch 7
 
@@ -219,6 +219,56 @@ class ServerUpgradeTests(unittest.TestCase):
         self.assertEqual(
             request(self.server, "GET", "/timestamp/" + self.digest.hex()), (404, b"Pending")
         )
+
+
+class ServerRecoverTests(unittest.TestCase):
+    """GET /recover (issue #22): the receipt back from the fingerprint alone."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.clock = FAKE_NOW
+        self.server = start(tmp.name, now=lambda: self.clock)
+        self.addCleanup(lambda: stop(self.server))
+        self.digest = b"\x09" * 32
+        self.path = "/recover/" + self.digest.hex()
+        request(self.server, "POST", "/digest", self.digest)
+        self.clock += EPOCH_SECONDS
+        close_due(self.server.store, self.server.signer, self.server.now())
+
+    def _publish(self):
+        self.assertEqual(publish_due(self.server.store, self.server.signer, self.server.repo), [7])
+
+    def test_recover_gives_the_same_receipt_as_timestamp(self):
+        self.assertEqual(
+            request(self.server, "GET", self.path), request(self.server, "GET", "/timestamp/" + self.digest.hex())
+        )
+
+    def test_recover_with_the_epoch_is_answered_from_the_published_folder(self):
+        self._publish()
+        self.server.store.close()
+        self.server.store = Store(":memory:")  # the database is gone, the repo is not
+        status, receipt = request(self.server, "GET", self.path + "?epoch=7")
+        self.assertEqual(status, 200)
+        _, public_key = request(self.server, "GET", "/key")
+        self.assertTrue(verify_signed_receipt(self.digest, receipt, public_key))
+
+    def test_recover_with_the_epoch_is_not_found_until_published(self):
+        self.assertEqual(request(self.server, "GET", self.path + "?epoch=7"), (404, b"Not found"))
+        self._publish()
+        self.assertEqual(request(self.server, "GET", self.path + "?epoch=7")[0], 200)
+
+    def test_recover_in_the_wrong_hour_is_not_found(self):
+        self._publish()
+        self.assertEqual(request(self.server, "GET", self.path + "?epoch=8"), (404, b"Not found"))
+
+    def test_recover_of_a_fingerprint_never_seen_is_not_found(self):
+        self._publish()
+        self.assertEqual(request(self.server, "GET", "/recover/" + "ab" * 32 + "?epoch=7"), (404, b"Not found"))
+
+    def test_recover_rejects_bad_hex_and_bad_epoch(self):
+        self.assertEqual(request(self.server, "GET", "/recover/zz")[0], 400)
+        self.assertEqual(request(self.server, "GET", self.path + "?epoch=seven")[0], 400)
 
 
 class CloserTests(unittest.TestCase):

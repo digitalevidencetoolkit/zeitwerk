@@ -122,6 +122,26 @@ def upgraded_receipt(store: Store, digest: bytes) -> bytes | None:
     return recover_receipt(digest, leaf_set, deserialize_attestation(attestation))
 
 
+def recovered_receipt(repo: str | Path, digest: bytes, epoch: int) -> bytes | None:
+    """The receipt for a fingerprint in a published hour, rebuilt from the repo.
+
+    What /recover?epoch=N serves: the same bytes as upgraded_receipt, but from
+    the published leaf set and attestation rather than the store, so the hour
+    can be answered for with the database gone. None if the hour isn't
+    published, or the fingerprint isn't in it.
+    """
+    from zeitwerk.publisher import read_epoch
+
+    check_digest(digest)
+    try:
+        leaf_set, _, attestation = read_epoch(Path(repo), epoch)
+    except FileNotFoundError:
+        return None
+    if digest not in decode_leaf_set(leaf_set):
+        return None
+    return recover_receipt(digest, leaf_set, deserialize_attestation(attestation))
+
+
 def verify_signed_receipt(digest: bytes, receipt: bytes, pubkey: bytes) -> bool:
     """Verify a signed receipt offline with only the public key (issue #17).
 

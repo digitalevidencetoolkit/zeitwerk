@@ -4,9 +4,12 @@ Same URL shape as an OpenTimestamps calendar, on the stdlib `http.server`:
 
     POST /digest            32 raw bytes in, pending receipt out
     GET  /timestamp/<hex>   the upgraded receipt, or 404 while pending
+    GET  /recover/<hex>     the receipt rebuilt from the published set, with
+                            only the fingerprint; `?epoch=N` names the hour
     GET  /key               the signer's raw Ed25519 public key
 
-A background thread seals each hour once it is over (start_closer).
+A background thread seals each hour once it is over and publishes it to the
+git repo under the data directory (start_closer).
 
 State lives in a data directory, `~/.zeitwerk` by default: the SQLite store
 and the signing key, so a restart loses nothing.
@@ -22,11 +25,19 @@ import time
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs
 
 from zeitwerk.epochtree import DIGEST_SIZE, check_digest
 from zeitwerk.signer import Signer
 from zeitwerk.store import EpochClosed, EpochFull, Store
-from zeitwerk.witness import EPOCH_SECONDS, close_due, publish_due, pending_receipt, upgraded_receipt
+from zeitwerk.witness import (
+    EPOCH_SECONDS,
+    close_due,
+    pending_receipt,
+    publish_due,
+    recovered_receipt,
+    upgraded_receipt,
+)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 14788
@@ -48,6 +59,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/timestamp/"):
             self.get_timestamp(self.path[len("/timestamp/") :])
+        elif self.path.startswith("/recover/"):
+            self.get_recover(self.path[len("/recover/") :])
         elif self.path == "/key":
             self.get_key()
         else:
@@ -83,6 +96,32 @@ class Handler(BaseHTTPRequestHandler):
         if receipt is not None:
             return self._reply(200, receipt, "application/octet-stream")
         self._reply(404, "Pending" if self.server.store.is_submitted(digest) else "Not found")
+
+    def get_recover(self, rest: str):
+        """Rebuild the receipt for a fingerprint from what was published (issue #22).
+
+        Without `?epoch=N`, the store's index names the earliest sealed hour
+        holding it. With it, the answer comes from the published folder for
+        that hour alone, database or no database.
+        """
+        hex_digest, _, query = rest.partition("?")
+        try:
+            digest = bytes.fromhex(hex_digest)
+            check_digest(digest)
+        except ValueError:
+            return self._reply(400, "Expected a 64-character hex digest")
+        try:
+            epochs = parse_qs(query).get("epoch")
+            epoch = int(epochs[0]) if epochs else None
+        except ValueError:
+            return self._reply(400, "Expected epoch=<hours since 1970-01-01 UTC>")
+        if epoch is None:
+            receipt = upgraded_receipt(self.server.store, digest)
+        else:
+            receipt = recovered_receipt(self.server.repo, digest, epoch)
+        if receipt is not None:
+            return self._reply(200, receipt, "application/octet-stream")
+        self._reply(404, "Not found")
 
     def get_key(self):
         """Return the signer's raw Ed25519 public key."""
