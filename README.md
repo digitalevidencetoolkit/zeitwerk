@@ -77,6 +77,23 @@ make test    # run the full suite, incl. the CI python -O pass
 make build   # build an sdist + wheel into dist/
 ```
 
+To run a witness that publishes each hour to a git remote of your own (an
+empty repository; its `main` branch gets one commit per hour):
+
+```sh
+.venv/bin/python -m zeitwerk.server --remote github=git@github.com:you/zeitwerk-epochs.git
+```
+
+State lives in `~/.zeitwerk` (`--data-dir` to move it): the SQLite store, the
+signing key, and `repo/`, the local clone the hours are committed to. Remotes
+are kept in that clone, so `--remote` is only needed once; `--remote name=url`
+again moves it. `--help` has the rest. Then, with only a fingerprint:
+
+```sh
+curl -s http://127.0.0.1:14788/recover/<sha256 hex>            # the receipt, from the earliest hour holding it
+curl -s "http://127.0.0.1:14788/recover/<sha256 hex>?epoch=N"  # from the published folder for hour N alone
+```
+
 ## License
 
 Zeitwerk's own code is released under the [MIT License](LICENSE). It depends on[python-opentimestamps](https://github.com/opentimestamps/python-opentimestamps), in `submodules/`, which keeps its own LGPLv3+ licence.

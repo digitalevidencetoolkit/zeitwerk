@@ -21,6 +21,12 @@ def ensure_repo(repo: Path) -> None:
     if not (repo / ".git").exists():
         _git(repo, "init", "-b", "main")
 
+def set_remote(repo: Path, name: str, url: str) -> None:
+    """Point remote `name` at `url`, adding it if new; push() covers it from then on."""
+    existing = _git(repo, "remote").stdout.split()
+    _git(repo, "remote", "set-url" if name in existing else "add", name, url)
+
+
 def commit(repo: Path, epoch: int) -> bool:
     """Commit the epoch folder and signers directory. Returns True if a commit was made."""
     from datetime import datetime, timedelta, timezone
@@ -73,6 +79,10 @@ def push(repo: Path, timeout: float = 30.0) -> dict[str, str | None]:
     from subprocess import CalledProcessError, TimeoutExpired
 
     result: dict[str, str | None] = {}
+
+    # Nothing committed yet (a fresh data dir, before its first published hour): nothing to push.
+    if subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", "main"], capture_output=True).returncode != 0:
+        return {}
 
     # Get list of remotes
     try:

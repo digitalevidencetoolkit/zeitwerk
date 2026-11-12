@@ -11,14 +11,17 @@ Same URL shape as an OpenTimestamps calendar, on the stdlib `http.server`:
 A background thread seals each hour once it is over and publishes it to the
 git repo under the data directory (start_closer).
 
-State lives in a data directory, `~/.zeitwerk` by default: the SQLite store
-and the signing key, so a restart loses nothing.
+State lives in a data directory, `~/.zeitwerk` by default: the SQLite store,
+the signing key and the git repo of published hours, so a restart loses
+nothing. Each `--remote name=url` is a git remote the repo pushes to after
+every published hour; they are kept in the repo, so once given they stay.
 
-    python -m zeitwerk.server
+    python -m zeitwerk.server --remote github=git@github.com:org/epochs.git
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
 import threading
 import time
@@ -28,6 +31,7 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 from zeitwerk.epochtree import DIGEST_SIZE, check_digest
+from zeitwerk.gitrepo import ensure_repo, set_remote
 from zeitwerk.signer import Signer
 from zeitwerk.store import EpochClosed, EpochFull, Store
 from zeitwerk.witness import (
@@ -164,7 +168,6 @@ def make_server(
     server.store = Store(data_dir / "zeitwerk.db")
     server.signer = Signer(data_dir / "signer.pem")
     server.repo = data_dir / "repo"
-    from zeitwerk.gitrepo import ensure_repo
     ensure_repo(server.repo)
     return server
 
@@ -198,10 +201,31 @@ def start_closer(server: ThreadingHTTPServer, interval: float = 60.0) -> Callabl
     return stop
 
 
-def main() -> None:
-    server = make_server(DEFAULT_DATA_DIR)
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="python -m zeitwerk.server", description=__doc__.split("\n\n")[0])
+    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR, help="store, key and repo (default: %(default)s)")
+    parser.add_argument("--host", default=DEFAULT_HOST, help="default: %(default)s")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="default: %(default)s")
+    parser.add_argument("--recover-uri", help="what pending receipts point back to (default: the bound address)")
+    parser.add_argument(
+        "--remote",
+        action="append",
+        default=[],
+        metavar="NAME=URL",
+        type=lambda s: tuple(s.split("=", 1)) if "=" in s else parser.error(f"--remote wants NAME=URL, got {s!r}"),
+        help="git remote to push every published hour to; repeatable",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    server = make_server(args.data_dir, args.host, args.port, recover_uri=args.recover_uri)
+    for name, url in args.remote:
+        set_remote(server.repo, name, url)
     start_closer(server)
-    print(f"zeitwerk witness on http://{DEFAULT_HOST}:{DEFAULT_PORT}")
+    print(f"zeitwerk witness on http://{args.host}:{args.port}, publishing to {server.repo}", flush=True)
     server.serve_forever()
 
 

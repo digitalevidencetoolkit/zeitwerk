@@ -11,7 +11,7 @@ from pathlib import Path
 
 import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
 
-from zeitwerk.gitrepo import commit, ensure_repo, push
+from zeitwerk.gitrepo import commit, ensure_repo, push, set_remote
 HAS_GIT = shutil.which("git") is not None
 
 
@@ -107,6 +107,12 @@ class PushTests(unittest.TestCase):
         ensure_repo(self.temp_dir)
         self.assertEqual(push(self.temp_dir), {})
 
+    def test_nothing_committed_yet_is_nothing_to_push(self):
+        """A fresh data dir has a remote before its first hour: no push, no false alarm."""
+        ensure_repo(self.temp_dir)
+        set_remote(self.temp_dir, "mirror", "/nonexistent")
+        self.assertEqual(push(self.temp_dir), {})
+
     def test_second_push_with_nothing_new_does_nothing(self):
         bare_dir = Path(tempfile.mkdtemp())
         self.addCleanup(lambda: shutil.rmtree(bare_dir, ignore_errors=True))
@@ -149,6 +155,19 @@ class PushTests(unittest.TestCase):
         result = push(self.temp_dir)
         self.assertIsNone(result["origin"])
         self.assertIsNotNone(result["bad"])
+
+    def test_set_remote_adds_then_updates_and_push_follows(self):
+        bare_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(bare_dir, ignore_errors=True))
+        subprocess.run(["git", "init", "--bare", str(bare_dir)], check=True, capture_output=True)
+        ensure_repo(self.temp_dir)
+        set_remote(self.temp_dir, "mirror", "/nonexistent")
+        set_remote(self.temp_dir, "mirror", str(bare_dir))  # same name again: the URL moves
+        from zeitwerk.publisher import epoch_path
+        (self.temp_dir / epoch_path(7)).mkdir(parents=True)
+        (self.temp_dir / epoch_path(7) / "leaves.bin").write_text("test")
+        commit(self.temp_dir, 7)
+        self.assertEqual(push(self.temp_dir), {"mirror": None})
 
 
 if __name__ == "__main__":

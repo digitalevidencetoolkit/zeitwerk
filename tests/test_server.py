@@ -17,7 +17,7 @@ import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
 from opentimestamps.core.serialize import BytesDeserializationContext
 from opentimestamps.core.timestamp import Timestamp
 from zeitwerk import ZeitwerkPendingAttestation, deserialize_attestation, serialize_attestation
-from zeitwerk.server import Handler, make_server, start_closer
+from zeitwerk.server import Handler, make_server, parse_args, start_closer
 from zeitwerk.store import Store
 from zeitwerk.witness import EPOCH_SECONDS, close_due, publish_due, verify_signed_receipt
 
@@ -269,6 +269,17 @@ class ServerRecoverTests(unittest.TestCase):
     def test_recover_rejects_bad_hex_and_bad_epoch(self):
         self.assertEqual(request(self.server, "GET", "/recover/zz")[0], 400)
         self.assertEqual(request(self.server, "GET", self.path + "?epoch=seven")[0], 400)
+
+
+class ArgsTests(unittest.TestCase):
+    def test_remotes_are_name_url_pairs(self):
+        args = parse_args(["--remote", "github=git@github.com:o/r.git", "--remote", "codeberg=https://codeberg.org/o/r"])
+        self.assertEqual(args.remote, [("github", "git@github.com:o/r.git"), ("codeberg", "https://codeberg.org/o/r")])
+        self.assertEqual(parse_args([]).remote, [])
+
+    def test_a_remote_without_a_name_is_refused(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            parse_args(["--remote", "git@github.com:o/r.git"])
 
 
 class CloserTests(unittest.TestCase):
