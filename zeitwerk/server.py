@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -173,7 +174,11 @@ def make_server(
     server.store = Store(data_dir / "zeitwerk.db")
     server.signer = Signer(data_dir / "signer.pem")
     server.repo = data_dir / "repo"
-    ensure_repo(server.repo)
+    try:
+        ensure_repo(server.repo)
+    except (OSError, subprocess.SubprocessError):
+        # git missing or broken: keep serving; publishing logs its own failures each run.
+        logging.exception("could not set up the publishing repo at %s", server.repo)
     return server
 
 
@@ -228,7 +233,10 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     server = make_server(args.data_dir, args.host, args.port, recover_uri=args.recover_uri)
     for name, url in args.remote:
-        set_remote(server.repo, name, url)
+        try:
+            set_remote(server.repo, name, url)
+        except (OSError, subprocess.SubprocessError):
+            logging.exception("could not set remote %s", name)
     start_closer(server)
     print(f"zeitwerk witness on http://{args.host}:{args.port}, publishing to {server.repo}", flush=True)
     server.serve_forever()
