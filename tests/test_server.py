@@ -124,6 +124,17 @@ class ServerRecoverUriTests(unittest.TestCase):
         self.assertEqual(pending_attestation(body, digest).recover_uri, "https://zeitwerk.example")
 
 
+class ServerWithoutGitTests(unittest.TestCase):
+    def test_a_missing_git_does_not_stop_the_server(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        no_git = FileNotFoundError(2, "No such file or directory", "git")
+        with mock.patch("zeitwerk.server.ensure_repo", side_effect=no_git), self.assertLogs(level="ERROR"):
+            server = start(tmp.name)
+        self.addCleanup(stop, server)
+        self.assertEqual(request(server, "POST", "/digest", b"\x0c" * 32)[0], 200)
+
+
 class ServerTimeoutTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -269,6 +280,16 @@ class ServerRecoverTests(unittest.TestCase):
     def test_recover_rejects_bad_hex_and_bad_epoch(self):
         self.assertEqual(request(self.server, "GET", "/recover/zz")[0], 400)
         self.assertEqual(request(self.server, "GET", self.path + "?epoch=seven")[0], 400)
+
+    def test_recover_with_an_epoch_out_of_datetime_range_is_not_found(self):
+        for epoch in ("100000000", "-100000000"):
+            self.assertEqual(request(self.server, "GET", self.path + "?epoch=" + epoch), (404, b"Not found"))
+
+    def test_recover_from_a_corrupt_published_folder_is_not_found(self):
+        from zeitwerk.publisher import epoch_path
+        self._publish()
+        (self.server.repo / epoch_path(7) / "leaves.bin").write_bytes(b"garbage")
+        self.assertEqual(request(self.server, "GET", self.path + "?epoch=7"), (404, b"Not found"))
 
 
 class ArgsTests(unittest.TestCase):

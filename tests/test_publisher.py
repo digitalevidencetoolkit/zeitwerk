@@ -57,6 +57,32 @@ class WriteEpochTests(unittest.TestCase):
         self.assertEqual(read_root, tree.root)
         self.assertEqual(read_attestation, attestation)
 
+    def _leaf_set(self):
+        import hashlib
+        from zeitwerk.epochtree import build_epoch_tree, encode_leaf_set
+        digests = [hashlib.sha256(i.to_bytes(4, "big")).digest() for i in range(3)]
+        return encode_leaf_set(build_epoch_tree(digests).leaves)
+
+    def test_a_torn_write_is_repaired_on_the_next_call(self):
+        """A truncated or empty file left by a crash is rewritten, not a permanent conflict."""
+        from zeitwerk.publisher import epoch_path
+        leaf_set = self._leaf_set()
+        folder = self.temp_dir / epoch_path(7)
+        folder.mkdir(parents=True)
+        (folder / "leaves.bin").write_bytes(leaf_set[:5])
+        (folder / "attestation").write_bytes(b"")
+        write_epoch(self.temp_dir, 7, leaf_set, b"test_attestation")
+        self.assertEqual(read_epoch(self.temp_dir, 7)[0], leaf_set)
+        self.assertEqual(sorted(p.name for p in folder.glob("*.tmp")), [])
+
+    def test_different_content_is_still_a_conflict(self):
+        from zeitwerk.publisher import epoch_path
+        folder = self.temp_dir / epoch_path(7)
+        folder.mkdir(parents=True)
+        (folder / "attestation").write_bytes(b"another")
+        with self.assertRaises(ValueError):
+            write_epoch(self.temp_dir, 7, self._leaf_set(), b"test_attestation")
+
 
 class WriteSignerTests(unittest.TestCase):
     """Tests for write_signer."""
