@@ -18,6 +18,41 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# Epoch duration in seconds (1 hour)
+EPOCH_SECONDS = 3600
+
+
+def epoch_start(epoch: int) -> datetime:
+    """Return the start datetime of an epoch.
+    
+    Args:
+        epoch: The epoch number (hours since 1970-01-01 UTC).
+    
+    Returns:
+        The start datetime of the epoch in UTC timezone.
+    
+    Raises:
+        OverflowError: If the epoch is out of valid datetime range.
+    """
+    return datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(hours=epoch)
+
+
+def check_epoch_range(epoch: int) -> None:
+    """Check if an epoch is within a valid datetime range.
+    
+    Args:
+        epoch: The epoch number (hours since 1970-01-01 UTC).
+    
+    Raises:
+        ValueError: If the epoch is out of valid range.
+    """
+    # Try to compute the epoch start to check for overflow
+    # This will raise OverflowError if the epoch is too large
+    try:
+        epoch_start(epoch)
+    except OverflowError:
+        raise ValueError(f"Epoch {epoch} is out of valid datetime range")
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

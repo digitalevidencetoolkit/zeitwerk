@@ -90,7 +90,8 @@ def commit(repo: Path, epoch: int) -> bool:
         return False  # nothing staged
 
     # Build commit message
-    dt = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(hours=epoch)
+    from zeitwerk.publisher import epoch_start
+    dt = epoch_start(epoch)
     message = f"epoch {epoch} ({dt.strftime('%Y-%m-%d %H:00 UTC')})"
 
     _git(repo, "commit", "-m", message)

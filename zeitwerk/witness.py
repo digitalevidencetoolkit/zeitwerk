@@ -130,9 +130,15 @@ def recovered_receipt(repo: str | Path, digest: bytes, epoch: int) -> bytes | No
     can be answered for with the database gone. None if the hour isn't
     published, or the fingerprint isn't in it.
     """
-    from zeitwerk.publisher import read_epoch
+    from zeitwerk.publisher import read_epoch, check_epoch_range
 
     check_digest(digest)
+    # Validate epoch range first
+    check_epoch_range(epoch)
+    
+    # Skip consistency check here since recover_receipt will validate the data
+    # This avoids redundant decode + tree building
+    leaf_set, _, attestation = read_epoch(Path(repo), epoch, verify_consistency=False)
     try:
         leaf_set, _, attestation = read_epoch(Path(repo), epoch)
     except FileNotFoundError:
