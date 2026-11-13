@@ -2,18 +2,48 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
 GIT_USER_NAME = "zeitwerk"
 GIT_USER_EMAIL = "zeitwerk@digitalevidencetoolkit.org"
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """Run a git command in the given repository."""
+
+def _git(
+    repo: Path,
+    *args: str,
+    timeout: float | None = None,
+    check: bool = True,
+    capture_output: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    """Run a git command in the given repository.
+    
+    Args:
+        repo: Path to the git repository.
+        *args: Git command arguments.
+        timeout: Timeout in seconds for the subprocess.
+        check: If True, raise CalledProcessError on non-zero exit.
+        capture_output: If True, capture stdout and stderr.
+    
+    Returns:
+        CompletedProcess with the command results.
+    """
+    # Build environment to prevent interactive prompts and isolate from user config
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+    env["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    
     return subprocess.run(
-        ["git", "-C", str(repo), "-c", f"user.name={GIT_USER_NAME}", "-c", f"user.email={GIT_USER_EMAIL}", *args],
-        check=True,
-        capture_output=True,
+        ["git", "-C", str(repo), "-c", f"user.name={GIT_USER_NAME}", "-c", f"user.email={GIT_USER_EMAIL}",
+         "-c", "commit.gpgsign=false", *args],
+        check=check,
+        capture_output=capture_output,
         text=True,
+        timeout=timeout,
+        stdin=subprocess.DEVNULL,
+        env=env,
     )
 def ensure_repo(repo: Path) -> None:
     """Initialize a git repository at `repo` with a main branch if it doesn't exist."""
@@ -55,12 +85,7 @@ def commit(repo: Path, epoch: int) -> bool:
 
     # Check if there's anything to commit
     # git diff --cached --quiet returns 0 if no changes, 1 if there are changes
-    result = subprocess.run(
-        ["git", "-C", str(repo), "-c", f"user.name={GIT_USER_NAME}", "-c", f"user.email={GIT_USER_EMAIL}",
-         "diff", "--cached", "--quiet"],
-        capture_output=True,
-        text=True,
-    )
+    result = _git(repo, "diff", "--cached", "--quiet", check=False)
     if result.returncode == 0:
         return False  # nothing staged
 
@@ -90,18 +115,16 @@ def push(repo: Path, timeout: float = 30.0) -> dict[str, str | None]:
     result: dict[str, str | None] = {}
 
     # Nothing committed yet (a fresh data dir, before its first published hour): nothing to push.
-    if subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", "main"], capture_output=True).returncode != 0:
+    try:
+        rev_parse_result = _git(repo, "rev-parse", "--verify", "--quiet", "main", timeout=timeout, check=False)
+        if rev_parse_result.returncode != 0:
+            return {}
+    except (CalledProcessError, TimeoutExpired):
         return {}
 
     # Get list of remotes
     try:
-        remote_list = subprocess.run(
-            ["git", "-C", str(repo), "remote"],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=True,
-        )
+        remote_list = _git(repo, "remote", timeout=timeout)
         remotes = remote_list.stdout.strip().split('\n')
     except (CalledProcessError, TimeoutExpired):
         # If we can't even list remotes, return empty dict
@@ -114,13 +137,7 @@ def push(repo: Path, timeout: float = 30.0) -> dict[str, str | None]:
         # Check if there are new commits: rev-list --count remote/main..main
         # If count is 0, skip this remote?
         try:
-            count_result = subprocess.run(
-                ["git", "-C", str(repo), "rev-list", "--count", f"{remote}/main..main"],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=True,
-            )
+            count_result = _git(repo, "rev-list", "--count", f"{remote}/main..main", timeout=timeout)
             count = int(count_result.stdout.strip())
             if count == 0:
                 # No new commits, skip
@@ -130,13 +147,7 @@ def push(repo: Path, timeout: float = 30.0) -> dict[str, str | None]:
             pass
 
         try:
-            subprocess.run(
-                ["git", "-C", str(repo), "push", remote, "main"],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=True,
-            )
+            _git(repo, "push", remote, "main", timeout=timeout)
             result[remote] = None  # Success
         except (CalledProcessError, TimeoutExpired) as e:
             result[remote] = e.stderr if isinstance(e, CalledProcessError) else str(e)
