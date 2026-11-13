@@ -4,29 +4,45 @@ Same URL shape as an OpenTimestamps calendar, on the stdlib `http.server`:
 
     POST /digest            32 raw bytes in, pending receipt out
     GET  /timestamp/<hex>   the upgraded receipt, or 404 while pending
+    GET  /recover/<hex>     the receipt rebuilt from the published set, with
+                            only the fingerprint; `?epoch=N` names the hour
     GET  /key               the signer's raw Ed25519 public key
 
-A background thread seals each hour once it is over (start_closer).
+A background thread seals each hour once it is over and publishes it to the
+git repo under the data directory (start_closer).
 
-State lives in a data directory, `~/.zeitwerk` by default: the SQLite store
-and the signing key, so a restart loses nothing.
+State lives in a data directory, `~/.zeitwerk` by default: the SQLite store,
+the signing key and the git repo of published hours, so a restart loses
+nothing. Each `--remote name=url` is a git remote the repo pushes to after
+every published hour; they are kept in the repo, so once given they stay.
 
-    python -m zeitwerk.server
+    python -m zeitwerk.server --remote github=git@github.com:org/epochs.git
 """
 
 from __future__ import annotations
 
+import argparse
+import logging
+import subprocess
 import threading
 import time
-import traceback
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs
 
 from zeitwerk.epochtree import DIGEST_SIZE, check_digest
+from zeitwerk.gitrepo import ensure_repo, set_remote
 from zeitwerk.signer import Signer
 from zeitwerk.store import EpochClosed, EpochFull, Store
-from zeitwerk.witness import EPOCH_SECONDS, close_due, pending_receipt, upgraded_receipt
+from zeitwerk.witness import (
+    EPOCH_SECONDS,
+    close_due,
+    pending_receipt,
+    publish_due,
+    recovered_receipt,
+    upgraded_receipt,
+)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 14788
@@ -48,6 +64,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/timestamp/"):
             self.get_timestamp(self.path[len("/timestamp/") :])
+        elif self.path.startswith("/recover/"):
+            self.get_recover(self.path[len("/recover/") :])
         elif self.path == "/key":
             self.get_key()
         else:
@@ -83,6 +101,37 @@ class Handler(BaseHTTPRequestHandler):
         if receipt is not None:
             return self._reply(200, receipt, "application/octet-stream")
         self._reply(404, "Pending" if self.server.store.is_submitted(digest) else "Not found")
+
+    def get_recover(self, rest: str):
+        """Rebuild the receipt for a fingerprint from what was published (issue #22).
+
+        Without `?epoch=N`, the store's index names the earliest sealed hour
+        holding it. With it, the answer comes from the published folder for
+        that hour alone, database or no database.
+        """
+        hex_digest, _, query = rest.partition("?")
+        try:
+            digest = bytes.fromhex(hex_digest)
+            check_digest(digest)
+        except ValueError:
+            return self._reply(400, "Expected a 64-character hex digest")
+        try:
+            epochs = parse_qs(query).get("epoch")
+            epoch = int(epochs[0]) if epochs else None
+        except (ValueError, OverflowError):
+            return self._reply(400, "Expected epoch=<hours since 1970-01-01 UTC>")
+        if epoch is None:
+            receipt = upgraded_receipt(self.server.store, digest)
+        else:
+            try:
+                receipt = recovered_receipt(self.server.repo, digest, epoch)
+            except (ValueError, FileNotFoundError):
+                # ValueError: epoch out of range, inconsistent files, corrupt data
+                # FileNotFoundError: epoch not published
+                return self._reply(404, "Not found")
+        if receipt is not None:
+            return self._reply(200, receipt, "application/octet-stream")
+        self._reply(404, "Not found")
 
     def get_key(self):
         """Return the signer's raw Ed25519 public key."""
@@ -124,6 +173,12 @@ def make_server(
     server.recover_uri = recover_uri or f"http://{bound_host}:{bound_port}"
     server.store = Store(data_dir / "zeitwerk.db")
     server.signer = Signer(data_dir / "signer.pem")
+    server.repo = data_dir / "repo"
+    try:
+        ensure_repo(server.repo)
+    except (OSError, subprocess.SubprocessError):
+        # git missing or broken: keep serving; publishing logs its own failures each run.
+        logging.exception("could not set up the publishing repo at %s", server.repo)
     return server
 
 
@@ -140,8 +195,9 @@ def start_closer(server: ThreadingHTTPServer, interval: float = 60.0) -> Callabl
         while True:
             try:
                 close_due(server.store, server.signer, server.now())
+                publish_due(server.store, server.signer, server.repo)
             except Exception:  # try again next time: a dead closer would strand every receipt
-                traceback.print_exc()
+                logging.exception("closer: this run failed")
             if stopped.wait(interval):
                 return
 
@@ -155,10 +211,34 @@ def start_closer(server: ThreadingHTTPServer, interval: float = 60.0) -> Callabl
     return stop
 
 
-def main() -> None:
-    server = make_server(DEFAULT_DATA_DIR)
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="python -m zeitwerk.server", description=__doc__.split("\n\n")[0])
+    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR, help="store, key and repo (default: %(default)s)")
+    parser.add_argument("--host", default=DEFAULT_HOST, help="default: %(default)s")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="default: %(default)s")
+    parser.add_argument("--recover-uri", help="what pending receipts point back to (default: the bound address)")
+    parser.add_argument(
+        "--remote",
+        action="append",
+        default=[],
+        metavar="NAME=URL",
+        type=lambda s: tuple(s.split("=", 1)) if "=" in s else parser.error(f"--remote wants NAME=URL, got {s!r}"),
+        help="git remote to push every published hour to; repeatable",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    server = make_server(args.data_dir, args.host, args.port, recover_uri=args.recover_uri)
+    for name, url in args.remote:
+        try:
+            set_remote(server.repo, name, url)
+        except (OSError, subprocess.SubprocessError):
+            logging.exception("could not set remote %s", name)
     start_closer(server)
-    print(f"zeitwerk witness on http://{DEFAULT_HOST}:{DEFAULT_PORT}")
+    print(f"zeitwerk witness on http://{args.host}:{args.port}, publishing to {server.repo}", flush=True)
     server.serve_forever()
 
 

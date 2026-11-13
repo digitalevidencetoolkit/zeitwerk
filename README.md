@@ -47,7 +47,7 @@ For legal and compliance use cases, we offer paid affidavits (around €5) as a 
 - [x] Epoch tree and aggregator; inclusion and non-inclusion; receipt recovery from a published list ([#15](https://github.com/digitalevidencetoolkit/zeitwerk/pull/15))
 - [x] Trust anchor ([#1](https://github.com/digitalevidencetoolkit/zeitwerk/issues/1)), hourly epoch ([#2](https://github.com/digitalevidencetoolkit/zeitwerk/issues/2)), git as   publication target ([#3](https://github.com/digitalevidencetoolkit/zeitwerk/issues/3))
 - [x] Witness server with a single Ed25519 signer: `POST /digest`, `GET /timestamp/<hash>`, `GET /key` ([#17](https://github.com/digitalevidencetoolkit/zeitwerk/issues/17))
-- [ ] WIP October:  — hourly publishing and `/recover`
+- [ ] WIP November: hourly publishing to git, `GET /recover`, third-party verification from the published folder ([#22](https://github.com/digitalevidencetoolkit/zeitwerk/issues/22), [#24](https://github.com/digitalevidencetoolkit/zeitwerk/pull/24)) — code in, awaiting a real hour against a public remote ([#23](https://github.com/digitalevidencetoolkit/zeitwerk/issues/23))
 - [ ] November: written proof format spec, CLI verifier, N-of-M growth, public testnet?
 
 ⚠️ Receipts are not stable yet: the attestation tags are placeholders for now, so don't rely on anything Zeitwerk issues today.
@@ -75,6 +75,23 @@ submodule; each step is one `make` target:
 make setup   # create the venv + install dependencies (idempotent)
 make test    # run the full suite, incl. the CI python -O pass
 make build   # build an sdist + wheel into dist/
+```
+
+To run a witness that publishes each hour to a git remote of your own (an
+empty repository; its `main` branch gets one commit per hour):
+
+```sh
+.venv/bin/python -m zeitwerk.server --remote github=git@github.com:you/zeitwerk-epochs.git
+```
+
+State lives in `~/.zeitwerk` (`--data-dir` to move it): the SQLite store, the
+signing key, and `repo/`, the local clone the hours are committed to. Remotes
+are kept in that clone, so `--remote` is only needed once; `--remote name=url`
+again moves it. `--help` has the rest. Then, with only a fingerprint:
+
+```sh
+curl -s http://127.0.0.1:14788/recover/<sha256 hex>            # the receipt, from the earliest hour holding it
+curl -s "http://127.0.0.1:14788/recover/<sha256 hex>?epoch=N"  # from the published folder for hour N alone
 ```
 
 ## License

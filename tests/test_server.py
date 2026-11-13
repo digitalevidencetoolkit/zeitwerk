@@ -17,9 +17,9 @@ import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
 from opentimestamps.core.serialize import BytesDeserializationContext
 from opentimestamps.core.timestamp import Timestamp
 from zeitwerk import ZeitwerkPendingAttestation, deserialize_attestation, serialize_attestation
-from zeitwerk.server import Handler, make_server, start_closer
+from zeitwerk.server import Handler, make_server, parse_args, start_closer
 from zeitwerk.store import Store
-from zeitwerk.witness import EPOCH_SECONDS, close_due, verify_signed_receipt
+from zeitwerk.witness import EPOCH_SECONDS, close_due, publish_due, verify_signed_receipt
 
 FAKE_NOW = 7 * 3600 + 12  # 07:00:12 UTC on 1 January 1970, so epoch 7
 
@@ -124,6 +124,17 @@ class ServerRecoverUriTests(unittest.TestCase):
         self.assertEqual(pending_attestation(body, digest).recover_uri, "https://zeitwerk.example")
 
 
+class ServerWithoutGitTests(unittest.TestCase):
+    def test_a_missing_git_does_not_stop_the_server(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        no_git = FileNotFoundError(2, "No such file or directory", "git")
+        with mock.patch("zeitwerk.server.ensure_repo", side_effect=no_git), self.assertLogs(level="ERROR"):
+            server = start(tmp.name)
+        self.addCleanup(stop, server)
+        self.assertEqual(request(server, "POST", "/digest", b"\x0c" * 32)[0], 200)
+
+
 class ServerTimeoutTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -221,6 +232,77 @@ class ServerUpgradeTests(unittest.TestCase):
         )
 
 
+class ServerRecoverTests(unittest.TestCase):
+    """GET /recover (issue #22): the receipt back from the fingerprint alone."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.clock = FAKE_NOW
+        self.server = start(tmp.name, now=lambda: self.clock)
+        self.addCleanup(lambda: stop(self.server))
+        self.digest = b"\x09" * 32
+        self.path = "/recover/" + self.digest.hex()
+        request(self.server, "POST", "/digest", self.digest)
+        self.clock += EPOCH_SECONDS
+        close_due(self.server.store, self.server.signer, self.server.now())
+
+    def _publish(self):
+        self.assertEqual(publish_due(self.server.store, self.server.signer, self.server.repo), [7])
+
+    def test_recover_gives_the_same_receipt_as_timestamp(self):
+        self.assertEqual(
+            request(self.server, "GET", self.path), request(self.server, "GET", "/timestamp/" + self.digest.hex())
+        )
+
+    def test_recover_with_the_epoch_is_answered_from_the_published_folder(self):
+        self._publish()
+        self.server.store.close()
+        self.server.store = Store(":memory:")  # the database is gone, the repo is not
+        status, receipt = request(self.server, "GET", self.path + "?epoch=7")
+        self.assertEqual(status, 200)
+        _, public_key = request(self.server, "GET", "/key")
+        self.assertTrue(verify_signed_receipt(self.digest, receipt, public_key))
+
+    def test_recover_with_the_epoch_is_not_found_until_published(self):
+        self.assertEqual(request(self.server, "GET", self.path + "?epoch=7"), (404, b"Not found"))
+        self._publish()
+        self.assertEqual(request(self.server, "GET", self.path + "?epoch=7")[0], 200)
+
+    def test_recover_in_the_wrong_hour_is_not_found(self):
+        self._publish()
+        self.assertEqual(request(self.server, "GET", self.path + "?epoch=8"), (404, b"Not found"))
+
+    def test_recover_of_a_fingerprint_never_seen_is_not_found(self):
+        self._publish()
+        self.assertEqual(request(self.server, "GET", "/recover/" + "ab" * 32 + "?epoch=7"), (404, b"Not found"))
+
+    def test_recover_rejects_bad_hex_and_bad_epoch(self):
+        self.assertEqual(request(self.server, "GET", "/recover/zz")[0], 400)
+        self.assertEqual(request(self.server, "GET", self.path + "?epoch=seven")[0], 400)
+
+    def test_recover_with_an_epoch_out_of_datetime_range_is_not_found(self):
+        for epoch in ("100000000", "-100000000"):
+            self.assertEqual(request(self.server, "GET", self.path + "?epoch=" + epoch), (404, b"Not found"))
+
+    def test_recover_from_a_corrupt_published_folder_is_not_found(self):
+        from zeitwerk.publisher import epoch_path
+        self._publish()
+        (self.server.repo / epoch_path(7) / "leaves.bin").write_bytes(b"garbage")
+        self.assertEqual(request(self.server, "GET", self.path + "?epoch=7"), (404, b"Not found"))
+
+
+class ArgsTests(unittest.TestCase):
+    def test_remotes_are_name_url_pairs(self):
+        args = parse_args(["--remote", "github=git@github.com:o/r.git", "--remote", "codeberg=https://codeberg.org/o/r"])
+        self.assertEqual(args.remote, [("github", "git@github.com:o/r.git"), ("codeberg", "https://codeberg.org/o/r")])
+        self.assertEqual(parse_args([]).remote, [])
+
+    def test_a_remote_without_a_name_is_refused(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            parse_args(["--remote", "git@github.com:o/r.git"])
+
+
 class CloserTests(unittest.TestCase):
     """The background thread that seals each finished hour."""
 
@@ -252,9 +334,29 @@ class CloserTests(unittest.TestCase):
             return []
 
         with mock.patch("zeitwerk.server.close_due", flaky_close_due), \
-                contextlib.redirect_stderr(io.StringIO()):  # the traceback it prints
+                contextlib.redirect_stderr(io.StringIO()):  # the error it logs
             self.addCleanup(start_closer(self.server, interval=0.001))
             self.assertTrue(second_run.wait(timeout=5))
+
+    def test_publish_failure_does_not_stop_sealing(self):
+        """A publish failure doesn't stop sealing (and closing) in the next tick."""
+        digest = b"\x0b" * 32
+        request(self.server, "POST", "/digest", digest)
+        self.clock += EPOCH_SECONDS  # now at epoch 8
+        # Make publish_due fail
+        def failing_publish_due(store, signer, repo):
+            raise RuntimeError("Publish failed")
+        with mock.patch("zeitwerk.server.publish_due", failing_publish_due), \
+                contextlib.redirect_stderr(io.StringIO()):  # the error it logs
+            start_closer(self.server)()  # first run: close succeeds, publish fails
+        # The hour should still be sealed
+        self.assertIsNotNone(self.server.store.sealed_epoch(7))
+        # Next hour: submit to epoch 8 and advance clock to epoch 9
+        request(self.server, "POST", "/digest", b"\x0c" * 32)
+        self.clock += EPOCH_SECONDS  # now at epoch 9
+        # Call close_due directly for epoch 8
+        close_due(self.server.store, self.server.signer, self.clock)
+        self.assertIsNotNone(self.server.store.sealed_epoch(8))
 
 
 class ServerRefusalTests(unittest.TestCase):

@@ -32,9 +32,16 @@ CREATE TABLE IF NOT EXISTS epochs (
     epoch       INTEGER PRIMARY KEY,
     leaf_set    BLOB NOT NULL,  -- frozen at close
     root        BLOB,           -- NULL until sealed
-    attestation BLOB            -- NULL until sealed
+    attestation BLOB,           -- NULL until sealed
+    published   INTEGER         -- NULL until published to repo
 );
 """
+
+# Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves an
+# existing table alone, so each one is added here if it is missing. Append only.
+ADDED_COLUMNS = [
+    ("epochs", "published", "INTEGER"),  # feat/publishing, Nov 2026
+]
 
 
 class EpochClosed(Exception):
@@ -56,8 +63,17 @@ class Store:
             raise ValueError(f"max_leaves must be in 1..{MAX_LEAVES}, got {max_leaves}")
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._lock = threading.Lock()  # one transaction at a time
         self._max_leaves = max_leaves
+
+    def _migrate(self) -> None:
+        """Bring a database created by an older version up to SCHEMA."""
+        with self._conn:
+            for table, column, type_ in ADDED_COLUMNS:
+                present = {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+                if column not in present:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {type_}")
 
     def close(self) -> None:
         """Close the database connection (not an epoch: see close_epoch)."""
@@ -130,6 +146,23 @@ class Store:
                 (root, attestation, epoch),
             )
 
+    def mark_published(self, epoch: int) -> None:
+        """Mark an epoch as published to the repo."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE epochs SET published = 1 WHERE epoch = ?", (epoch,)
+            )
+
+    def unpublished_epochs(self) -> list[int]:
+        """Sealed epochs that haven't been published yet, oldest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT epoch FROM epochs "
+                "WHERE attestation IS NOT NULL AND published IS NULL "
+                "ORDER BY epoch"
+            )
+            return [epoch for (epoch,) in rows]
+
     def unsealed_epochs(self, before: int) -> list[int]:
         """Hours older than `before` that have submissions but no seal, oldest first.
 
@@ -147,6 +180,16 @@ class Store:
                 (before,),
             )
             return [epoch for (epoch,) in rows]
+
+    def sealed_epoch(self, epoch: int) -> tuple[bytes, bytes] | None:
+        """Return (leaf_set, attestation) for a sealed epoch, or None.
+        Returns the pair once sealed (attestation IS NOT NULL) and None otherwise.
+        """
+        with self._lock:
+            return self._conn.execute(
+                "SELECT leaf_set, attestation FROM epochs WHERE epoch = ? AND attestation IS NOT NULL",
+                (epoch,),
+            ).fetchone()
 
     def sealed_for(self, digest: bytes) -> tuple[bytes, bytes] | None:
         """The earliest sealed hour holding this fingerprint, or None.

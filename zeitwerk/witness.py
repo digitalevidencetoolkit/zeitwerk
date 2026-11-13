@@ -7,6 +7,8 @@ a signed receipt.
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from opentimestamps.core.serialize import (
     BytesDeserializationContext,
     BytesSerializationContext,
@@ -28,10 +30,12 @@ from zeitwerk.epochtree import (
     recover_receipt,
     verify_receipt,
 )
+from zeitwerk.gitrepo import commit, push
 from zeitwerk.signer import KEY_ID_SIZE, Signer, key_id_of
 from zeitwerk.store import Store
 
-EPOCH_SECONDS = 3600
+from zeitwerk.publisher import EPOCH_SECONDS  # noqa: F401  (re-exported: server, tests)
+
 SIGNATURE_SIZE = 64
 
 
@@ -74,6 +78,38 @@ def close_due(store: Store, signer: Signer, now: float) -> list[int]:
     return sealed
 
 
+def publish_due(store: Store, signer: Signer, repo: str | Path) -> list[int]:
+    """Publish every sealed but unpublished epoch to the git repo.
+
+    For each epoch in store.unpublished_epochs(), write the epoch data and
+    signer key to the repo, commit to git, then mark as published. Then push
+    to every remote: a no-op when nothing is new, so a push that failed last
+    time is retried every call. Failures are logged but don't block other
+    epochs or future attempts.
+    """
+    from zeitwerk.publisher import write_epoch, write_signer
+
+    repo = Path(repo)
+    published = []
+    # Write signer once per call
+    write_signer(repo, signer.public_key)
+    for epoch in store.unpublished_epochs():
+        try:
+            sealed = store.sealed_epoch(epoch)
+            if sealed is not None:
+                leaf_set, attestation_bytes = sealed
+                write_epoch(repo, epoch, leaf_set, attestation_bytes)
+                commit(repo, epoch)
+                store.mark_published(epoch)
+                published.append(epoch)
+        except Exception as e:
+            logging.exception(f"Failed to publish epoch {epoch}: {e}")
+    for remote, error in push(repo).items():
+        if error is not None:
+            logging.warning(f"Push to {remote} failed: {error.strip()}")
+    return published
+
+
 def upgraded_receipt(store: Store, digest: bytes) -> bytes | None:
     """The receipt for a sealed fingerprint, or None while pending or unknown.
 
@@ -85,6 +121,34 @@ def upgraded_receipt(store: Store, digest: bytes) -> bytes | None:
         return None
     leaf_set, attestation = sealed
     return recover_receipt(digest, leaf_set, deserialize_attestation(attestation))
+
+
+def recovered_receipt(repo: str | Path, digest: bytes, epoch: int) -> bytes | None:
+    """The receipt for a fingerprint in a published hour, rebuilt from the repo.
+
+    What /recover?epoch=N serves: the same bytes as upgraded_receipt, but from
+    the published leaf set and attestation rather than the store, so the hour
+    can be answered for with the database gone. None if the hour isn't
+    published, or the fingerprint isn't in it.
+    
+    Raises:
+        ValueError: If the epoch is out of range or the published data is inconsistent.
+        FileNotFoundError: If the epoch folder or any required file is missing.
+    """
+    from zeitwerk.publisher import read_epoch, check_epoch_range
+
+    check_digest(digest)
+    # Validate epoch range first
+    check_epoch_range(epoch)
+    
+    # Skip consistency check here since recover_receipt will validate the data
+    # This avoids redundant decode + tree building
+    leaf_set, _, attestation = read_epoch(Path(repo), epoch, verify_consistency=False)
+    try:
+        return recover_receipt(digest, leaf_set, deserialize_attestation(attestation))
+    except ValueError:
+        # digest not in leaf set or other validation error
+        return None
 
 
 def verify_signed_receipt(digest: bytes, receipt: bytes, pubkey: bytes) -> bool:
