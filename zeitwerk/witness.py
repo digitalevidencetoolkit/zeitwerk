@@ -34,7 +34,8 @@ from zeitwerk.gitrepo import commit, push
 from zeitwerk.signer import KEY_ID_SIZE, Signer, key_id_of
 from zeitwerk.store import Store
 
-EPOCH_SECONDS = 3600
+from zeitwerk.publisher import EPOCH_SECONDS  # noqa: F401  (re-exported: server, tests)
+
 SIGNATURE_SIZE = 64
 
 

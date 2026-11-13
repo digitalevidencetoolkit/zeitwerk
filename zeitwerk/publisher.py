@@ -152,8 +152,9 @@ def write_epoch(
         - epoch.json: metadata with sorted keys for stable bytes
 
     Uses atomic writes (temp file + fsync + rename) to prevent corruption
-    from crashes or power loss. If files exist with different content, raises
-    ValueError to signal a genuine conflict.
+    from crashes or power loss. A file that is a truncated prefix of the
+    expected bytes (a torn write) is rewritten; any other difference raises
+    ValueError as a genuine conflict.
 
     Args:
         repo: Path to the repository root (where epochs/ and signers/ live).
@@ -171,40 +172,43 @@ def write_epoch(
 
     files = epoch_files(epoch, leaf_set, attestation)
 
-    # First, check if any existing files have different content
-    # This maintains the existing behavior of raising ValueError on conflicts
+    # Decide per file before writing anything. A file that is a strict prefix of
+    # what we would write (including empty) is a torn write from a crash before
+    # writes were atomic: rewrite it. Any other difference is a real conflict.
+    to_write = {}
     for filename, content in files.items():
         filepath = epoch_folder / filename
         if filepath.exists():
-            if filepath.read_bytes() != content:
+            existing = filepath.read_bytes()
+            if existing == content:
+                continue
+            if not content.startswith(existing):
                 raise ValueError(
                     f"Epoch {epoch} folder exists with different {filename} content"
                 )
+        to_write[filename] = content
 
-    # Write all files atomically using temp files + fsync + rename
-    for filename, content in files.items():
+    # Temp file in the same directory + fsync + os.replace: a crash leaves either
+    # the old file or the complete new one, never a partial one.
+    for filename, content in to_write.items():
         filepath = epoch_folder / filename
-        
-        # Skip if file already exists with correct content
-        if filepath.exists():
-            continue
-        
-        # Write to temp file in same directory (ensures same filesystem for atomic rename)
-        temp_path = filepath.with_suffix(filepath.suffix + ".tmp")
+        temp_path = filepath.with_name(filepath.name + ".tmp")
         try:
-            # Write content to temp file
-            temp_path.write_bytes(content)
-            # Fsync to ensure data is on disk
-            with open(temp_path, "ab") as f:
+            with open(temp_path, "wb") as f:
+                f.write(content)
                 f.flush()
                 os.fsync(f.fileno())
-            # Atomic rename
-            temp_path.replace(filepath)
-        except Exception:
-            # Clean up temp file if something went wrong
-            if temp_path.exists():
-                temp_path.unlink()
+            os.replace(temp_path, filepath)
+        except BaseException:
+            temp_path.unlink(missing_ok=True)
             raise
+    if to_write:
+        # Persist the renames themselves.
+        dir_fd = os.open(epoch_folder, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
 
 
 def _epoch_json(epoch: int, leaf_count: int, root: bytes) -> bytes:
