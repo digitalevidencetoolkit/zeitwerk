@@ -25,7 +25,15 @@ def ensure_repo(repo: Path) -> None:
 def set_remote(repo: Path, name: str, url: str) -> None:
     """Point remote `name` at `url`, adding it if new; push() covers it from then on."""
     existing = _git(repo, "remote").stdout.split()
-    _git(repo, "remote", "set-url" if name in existing else "add", name, url)
+    if name in existing:
+        # Changing URL of existing remote: remove stale tracking refs first
+        # This ensures push() will correctly detect new commits after the URL change
+        _git(repo, "remote", "set-url", name, url)
+        # Remove the tracking branch for this remote so it will be refreshed on next fetch/push
+        tracking_ref = f"refs/remotes/{name}/main"
+        _git(repo, "update-ref", "-d", tracking_ref, check=False)
+    else:
+        _git(repo, "remote", "add", name, url)
 
 
 def commit(repo: Path, epoch: int) -> bool:
