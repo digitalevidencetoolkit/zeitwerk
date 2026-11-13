@@ -19,7 +19,8 @@ def ensure_repo(repo: Path) -> None:
     """Initialize a git repository at `repo` with a main branch if it doesn't exist."""
     repo.mkdir(parents=True, exist_ok=True)
     if not (repo / ".git").exists():
-        _git(repo, "init", "-b", "main")
+        _git(repo, "init")
+        _git(repo, "symbolic-ref", "HEAD", "refs/heads/main")
 
 def set_remote(repo: Path, name: str, url: str) -> None:
     """Point remote `name` at `url`, adding it if new; push() covers it from then on."""
