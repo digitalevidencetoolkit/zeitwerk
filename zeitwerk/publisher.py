@@ -77,7 +77,7 @@ def epoch_path(epoch: int) -> str:
     Returns:
         The relative path string for the epoch folder.
     """
-    dt = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(hours=epoch)
+    dt = epoch_start(epoch)
     return f"epochs/{dt.year:04d}/{dt.month:02d}/{dt.day:02d}/{dt.hour:02d}"
 
 
@@ -104,7 +104,7 @@ def epoch_of_path(path: str | Path) -> int:
     dt = datetime(year, month, day, hour, tzinfo=timezone.utc)
     base = datetime(1970, 1, 1, tzinfo=timezone.utc)
     delta = dt - base
-    epoch = int(delta.total_seconds() // 3600)
+    epoch = int(delta.total_seconds() // EPOCH_SECONDS)
     if epoch < 0:
         raise ValueError(f"Epoch must be non-negative, got {epoch}")
     return epoch
@@ -151,8 +151,9 @@ def write_epoch(
         - attestation: serialized attestation bytes
         - epoch.json: metadata with sorted keys for stable bytes
 
-    Idempotent: if the folder already exists with the same bytes, does nothing.
-    If the folder exists with *different* bytes, raises ValueError.
+    Uses atomic writes (temp file + fsync + rename) to prevent corruption
+    from crashes or power loss. If files exist with different content, raises
+    ValueError to signal a genuine conflict.
 
     Args:
         repo: Path to the repository root (where epochs/ and signers/ live).
@@ -163,12 +164,15 @@ def write_epoch(
     Raises:
         ValueError: If the epoch folder exists with different content.
     """
+    import os
+    
     epoch_folder = repo / epoch_path(epoch)
     epoch_folder.mkdir(parents=True, exist_ok=True)
 
     files = epoch_files(epoch, leaf_set, attestation)
 
-    # Check idempotency: if folder exists, verify all files match
+    # First, check if any existing files have different content
+    # This maintains the existing behavior of raising ValueError on conflicts
     for filename, content in files.items():
         filepath = epoch_folder / filename
         if filepath.exists():
@@ -176,14 +180,37 @@ def write_epoch(
                 raise ValueError(
                     f"Epoch {epoch} folder exists with different {filename} content"
                 )
-        else:
-            filepath.write_bytes(content)
+
+    # Write all files atomically using temp files + fsync + rename
+    for filename, content in files.items():
+        filepath = epoch_folder / filename
+        
+        # Skip if file already exists with correct content
+        if filepath.exists():
+            continue
+        
+        # Write to temp file in same directory (ensures same filesystem for atomic rename)
+        temp_path = filepath.with_suffix(filepath.suffix + ".tmp")
+        try:
+            # Write content to temp file
+            temp_path.write_bytes(content)
+            # Fsync to ensure data is on disk
+            with open(temp_path, "ab") as f:
+                f.flush()
+                os.fsync(f.fileno())
+            # Atomic rename
+            temp_path.replace(filepath)
+        except Exception:
+            # Clean up temp file if something went wrong
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
 
 
 def _epoch_json(epoch: int, leaf_count: int, root: bytes) -> bytes:
     """Build epoch.json content with sorted keys for stable bytes."""
     import json
-    start = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(hours=epoch)
+    start = epoch_start(epoch)
     end = start + timedelta(hours=1)
     data = {
         "epoch": epoch,
@@ -247,7 +274,11 @@ def write_signer(repo: Path, public_key: bytes, valid_from: int | None = None, v
     return key_id
 
 
-def read_epoch(repo: Path, epoch: int) -> tuple[bytes, bytes, bytes]:
+def read_epoch(
+    repo: Path, 
+    epoch: int, 
+    verify_consistency: bool = True
+) -> tuple[bytes, bytes, bytes]:
     """Read epoch data from the repository folder.
 
     Returns the leaf set, root hash, and attestation bytes for the given epoch.
@@ -255,13 +286,16 @@ def read_epoch(repo: Path, epoch: int) -> tuple[bytes, bytes, bytes]:
     Args:
         repo: Path to the repository root.
         epoch: The epoch number.
+        verify_consistency: If True (default), verify that the stored root
+            matches the root computed from the leaf set. Set to False for
+            performance when the data will be verified elsewhere.
 
     Returns:
         A tuple of (leaf_set, root, attestation_bytes).
 
     Raises:
         FileNotFoundError: If the epoch folder or any required file is missing.
-        ValueError: If the files are inconsistent (e.g., root doesn't match leaf_set).
+        ValueError: If verify_consistency is True and the files are inconsistent.
     """
     from zeitwerk.epochtree import decode_leaf_set, build_epoch_tree
 
@@ -271,14 +305,15 @@ def read_epoch(repo: Path, epoch: int) -> tuple[bytes, bytes, bytes]:
     root = (epoch_folder / "root").read_bytes()
     attestation = (epoch_folder / "attestation").read_bytes()
 
-    # Verify consistency: root should match leaf_set
-    leaves = decode_leaf_set(leaf_set)
-    tree = build_epoch_tree(leaves)
-    if tree.root != root:
-        raise ValueError(
-            f"Epoch {epoch}: stored root {root.hex()} doesn't match "
-            f"leaf_set root {tree.root.hex()}"
-        )
+    if verify_consistency:
+        # Verify consistency: root should match leaf_set
+        leaves = decode_leaf_set(leaf_set)
+        tree = build_epoch_tree(leaves)
+        if tree.root != root:
+            raise ValueError(
+                f"Epoch {epoch}: stored root {root.hex()} doesn't match "
+                f"leaf_set root {tree.root.hex()}"
+            )
 
     return leaf_set, root, attestation
 

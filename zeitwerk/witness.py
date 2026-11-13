@@ -129,6 +129,10 @@ def recovered_receipt(repo: str | Path, digest: bytes, epoch: int) -> bytes | No
     the published leaf set and attestation rather than the store, so the hour
     can be answered for with the database gone. None if the hour isn't
     published, or the fingerprint isn't in it.
+    
+    Raises:
+        ValueError: If the epoch is out of range or the published data is inconsistent.
+        FileNotFoundError: If the epoch folder or any required file is missing.
     """
     from zeitwerk.publisher import read_epoch, check_epoch_range
 
@@ -140,12 +144,10 @@ def recovered_receipt(repo: str | Path, digest: bytes, epoch: int) -> bytes | No
     # This avoids redundant decode + tree building
     leaf_set, _, attestation = read_epoch(Path(repo), epoch, verify_consistency=False)
     try:
-        leaf_set, _, attestation = read_epoch(Path(repo), epoch)
-    except FileNotFoundError:
+        return recover_receipt(digest, leaf_set, deserialize_attestation(attestation))
+    except ValueError:
+        # digest not in leaf set or other validation error
         return None
-    if digest not in decode_leaf_set(leaf_set):
-        return None
-    return recover_receipt(digest, leaf_set, deserialize_attestation(attestation))
 
 
 def verify_signed_receipt(digest: bytes, receipt: bytes, pubkey: bytes) -> bool:

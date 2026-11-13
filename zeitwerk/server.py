@@ -117,12 +117,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             epochs = parse_qs(query).get("epoch")
             epoch = int(epochs[0]) if epochs else None
-        except ValueError:
+        except (ValueError, OverflowError):
             return self._reply(400, "Expected epoch=<hours since 1970-01-01 UTC>")
         if epoch is None:
             receipt = upgraded_receipt(self.server.store, digest)
         else:
-            receipt = recovered_receipt(self.server.repo, digest, epoch)
+            try:
+                receipt = recovered_receipt(self.server.repo, digest, epoch)
+            except (ValueError, FileNotFoundError):
+                # ValueError: epoch out of range, inconsistent files, corrupt data
+                # FileNotFoundError: epoch not published
+                return self._reply(404, "Not found")
         if receipt is not None:
             return self._reply(200, receipt, "application/octet-stream")
         self._reply(404, "Not found")
