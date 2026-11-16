@@ -94,6 +94,23 @@ curl -s http://127.0.0.1:14788/recover/<sha256 hex>            # the receipt, fr
 curl -s "http://127.0.0.1:14788/recover/<sha256 hex>?epoch=N"  # from the published folder for hour N alone
 ```
 
+## CLI
+
+Once installed, the `zeitwerk` command-line tool lets you verify documents:
+
+```sh
+# I have the receipt: check it against the witness's public key
+zeitwerk verify doc.pdf --receipt doc.ots --key witness.pub
+
+# I lost the receipt: rebuild it from the public record
+zeitwerk recover doc.pdf --epochs ../zeitwerk-epochs > doc.ots
+
+# I trust nobody: check the public record itself, operator offline
+zeitwerk verify doc.pdf --epochs ../zeitwerk-epochs
+```
+
+The first argument can be a file to hash or a 64-hex fingerprint. Exit code 0 means verified, 1 means not verified (with reason on stderr), 2 means bad input.
+
 ## License
 
 Zeitwerk's own code is released under the [MIT License](LICENSE). It depends on[python-opentimestamps](https://github.com/opentimestamps/python-opentimestamps), in `submodules/`, which keeps its own LGPLv3+ licence.
