@@ -40,6 +40,48 @@ def parse_fingerprint(arg: str) -> bytes:
             h.update(chunk)
     return h.digest()
 
+
+def find_epoch_for_digest(repo: Path, digest: bytes) -> int | None:
+    """Search the repository for an epoch containing the digest.
+
+    Greps the leaf lists (leaves.hex files) for the hex fingerprint.
+    Returns the epoch number if found, None otherwise.
+    """
+    from zeitwerk.publisher import epoch_of_path
+
+    hex_digest = digest.hex()
+
+    # Walk the epochs directory
+    epochs_dir = repo / "epochs"
+    if not epochs_dir.exists():
+        return None
+
+    for year_dir in epochs_dir.iterdir():
+        if not year_dir.is_dir():
+            continue
+        for month_dir in year_dir.iterdir():
+            if not month_dir.is_dir():
+                continue
+            for day_dir in month_dir.iterdir():
+                if not day_dir.is_dir():
+                    continue
+                for hour_dir in day_dir.iterdir():
+                    if not hour_dir.is_dir():
+                        continue
+
+                    # Check if this hour directory has the digest
+                    leaves_hex = hour_dir / "leaves.hex"
+                    if leaves_hex.exists():
+                        try:
+                            content = leaves_hex.read_text()
+                            if hex_digest in content:
+                                return epoch_of_path(hour_dir)
+                        except (IOError, UnicodeDecodeError):
+                            continue
+
+    return None
+
+
 def cmd_verify_epochs(args: argparse.Namespace) -> int:
     """Verify a document against the public epoch repository.
 
@@ -63,6 +105,7 @@ def cmd_verify_epochs(args: argparse.Namespace) -> int:
         epoch = args.epoch
     else:
         # Search for the epoch containing this digest
+        epoch = find_epoch_for_digest(repo, digest)
         if epoch is None:
             print(f"Error: No epoch found containing fingerprint {digest.hex()}", file=sys.stderr)
             return 1
