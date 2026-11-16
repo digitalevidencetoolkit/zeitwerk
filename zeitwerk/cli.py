@@ -41,45 +41,30 @@ def parse_fingerprint(arg: str) -> bytes:
     return h.digest()
 
 
-def find_epoch_for_digest(repo: Path, digest: bytes) -> int | None:
-    """Search the repository for an epoch containing the digest.
+def leaf_files(repo: Path) -> list[Path]:
+    """Every published leaves.hex in the repository, oldest epoch first.
 
-    Greps the leaf lists (leaves.hex files) for the hex fingerprint.
-    Returns the epoch number if found, None otherwise.
+    Epoch folders are epochs/YYYY/MM/DD/HH, zero-padded, so sorting the
+    paths sorts them chronologically.
+    """
+    return sorted((repo / "epochs").glob("*/*/*/*/leaves.hex"))
+
+
+def find_epoch_for_digest(repo: Path, digest: bytes) -> int | None:
+    """The earliest epoch whose published leaf list has the digest, or None.
+
+    Matches whole lines of leaves.hex (one hex fingerprint per line). If the
+    same document was submitted in several epochs, the earliest one is its
+    timestamp.
     """
     from zeitwerk.publisher import epoch_of_path
 
-    hex_digest = digest.hex()
-
-    # Walk the epochs directory
-    epochs_dir = repo / "epochs"
-    if not epochs_dir.exists():
-        return None
-
-    for year_dir in epochs_dir.iterdir():
-        if not year_dir.is_dir():
-            continue
-        for month_dir in year_dir.iterdir():
-            if not month_dir.is_dir():
-                continue
-            for day_dir in month_dir.iterdir():
-                if not day_dir.is_dir():
-                    continue
-                for hour_dir in day_dir.iterdir():
-                    if not hour_dir.is_dir():
-                        continue
-
-                    # Check if this hour directory has the digest
-                    leaves_hex = hour_dir / "leaves.hex"
-                    if leaves_hex.exists():
-                        try:
-                            content = leaves_hex.read_text()
-                            if hex_digest in content:
-                                return epoch_of_path(hour_dir)
-                        except (IOError, UnicodeDecodeError):
-                            continue
-
-    return None
+    line = digest.hex().encode()
+    return next(
+        (epoch_of_path(path.parent) for path in leaf_files(repo)
+         if line in path.read_bytes().split()),
+        None,
+    )
 
 
 def cmd_recover(args: argparse.Namespace) -> int:

@@ -79,6 +79,26 @@ class FindEpochForDigestTests(unittest.TestCase):
         found_epoch = find_epoch_for_digest(self.temp_dir, other_digest)
         self.assertIsNone(found_epoch)
 
+    def test_digest_in_several_epochs_returns_earliest(self):
+        """A document submitted in several epochs is timestamped by the earliest."""
+        import hashlib
+        from zeitwerk.publisher import write_epoch
+        from zeitwerk.epochtree import encode_leaf_set
+
+        digest = hashlib.sha256(b"document1").digest()
+        # Written newest first, so creation order isn't chronological order.
+        for epoch in (480_000, 250_000, 7):
+            write_epoch(self.temp_dir, epoch, encode_leaf_set([digest]), b"test_attestation")
+
+        self.assertEqual(find_epoch_for_digest(self.temp_dir, digest), 7)
+
+    def test_no_epochs_folder(self):
+        """A repository with no epochs/ folder has nothing to find."""
+        import hashlib
+
+        digest = hashlib.sha256(b"document1").digest()
+        self.assertIsNone(find_epoch_for_digest(self.temp_dir, digest))
+
 
 class VerifyEpochsTests(unittest.TestCase):
     """Tests for the verify --epochs command."""
