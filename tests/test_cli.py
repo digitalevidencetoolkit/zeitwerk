@@ -461,6 +461,68 @@ class VerifyReceiptTests(unittest.TestCase):
         self.assertEqual(result, 1)
 
 
+class FixtureTests(unittest.TestCase):
+    """Tests using the fixture data from a real epoch."""
+
+    def test_verify_with_fixture_epoch(self):
+        """Verify a document using the fixture epoch 498469."""
+        from pathlib import Path
+        
+        fixtures_dir = Path(__file__).parent.parent / "fixtures"
+        
+        # Check if fixtures exist
+        epoch_dir = fixtures_dir / "epochs" / "2026" / "11" / "12" / "13"
+        if not epoch_dir.exists():
+            self.skipTest("Fixture epoch 498469 not found")
+        
+        # Read the leaf set to get a valid fingerprint
+        leaves_hex = epoch_dir / "leaves.hex"
+        if not leaves_hex.exists():
+            self.skipTest("Fixture leaves.hex not found")
+        
+        content = leaves_hex.read_text()
+        fingerprints = [line.strip() for line in content.strip().split("\n") if line.strip()]
+        
+        if not fingerprints:
+            self.skipTest("No fingerprints in fixture")
+        
+        # Use the first fingerprint
+        fingerprint = fingerprints[0]
+        
+        # Verify using the fixture repo
+        result = main(["verify", fingerprint, "--epochs", str(fixtures_dir), "--epoch", "498469"])
+        self.assertEqual(result, 0)
+
+    def test_recover_with_fixture_epoch(self):
+        """Recover a receipt using the fixture epoch 498469."""
+        from pathlib import Path
+        
+        fixtures_dir = Path(__file__).parent.parent / "fixtures"
+        
+        # Check if fixtures exist
+        epoch_dir = fixtures_dir / "epochs" / "2026" / "11" / "12" / "13"
+        if not epoch_dir.exists():
+            self.skipTest("Fixture epoch 498469 not found")
+        
+        # Read the leaf set to get a valid fingerprint
+        leaves_hex = epoch_dir / "leaves.hex"
+        if not leaves_hex.exists():
+            self.skipTest("Fixture leaves.hex not found")
+        
+        content = leaves_hex.read_text()
+        fingerprints = [line.strip() for line in content.strip().split("\n") if line.strip()]
+        
+        if not fingerprints:
+            self.skipTest("No fingerprints in fixture")
+        
+        # Use the first fingerprint
+        fingerprint = fingerprints[0]
+        
+        # Recover the receipt
+        result = main(["recover", fingerprint, "--epochs", str(fixtures_dir)])
+        self.assertEqual(result, 0)
+
+
 class MainTests(unittest.TestCase):
     """Tests for main() argument parsing."""
 
