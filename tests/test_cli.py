@@ -206,6 +206,133 @@ class VerifyEpochsTests(unittest.TestCase):
         self.assertEqual(result, 2)
 
 
+class RecoverTests(unittest.TestCase):
+    """Tests for the recover command."""
+
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _create_test_epoch(self, epoch_num: int, digests: list[bytes]):
+        """Helper to create a test epoch with signed attestation."""
+        from zeitwerk.epochtree import build_epoch_tree, encode_leaf_set
+        from zeitwerk.publisher import write_epoch, write_signer
+        from zeitwerk.attestation import AnchorType, ZeitwerkAttestation, serialize_attestation
+        from zeitwerk.signer import Signer
+        
+        tree = build_epoch_tree(digests)
+        leaf_set = encode_leaf_set(tree.leaves)
+        
+        # Create a signer
+        signer = Signer()
+        write_signer(self.temp_dir, signer.public_key)
+        
+        # Create attestation
+        signature = signer.sign(epoch_num, tree.root)
+        key_id = signer.key_id
+        anchor_ref = key_id + signature
+        att = ZeitwerkAttestation(
+            epoch=epoch_num,
+            anchor_type=AnchorType.WITNESS_ED25519,
+            anchor_ref=anchor_ref
+        )
+        attestation = serialize_attestation(att)
+        
+        write_epoch(self.temp_dir, epoch_num, leaf_set, attestation)
+        return tree.root, key_id, leaf_set, attestation
+
+    def test_recover_known_digest(self):
+        """Recover a receipt for a known digest."""
+        import hashlib
+        from zeitwerk.epochtree import recover_receipt
+        from zeitwerk.attestation import deserialize_attestation
+        from io import BytesIO
+        import sys
+        
+        digests = [hashlib.sha256(b"document1").digest()]
+        _, _, leaf_set, attestation_bytes = self._create_test_epoch(42, digests)
+        
+        # Get expected receipt using library directly
+        # recover_receipt expects deserialized attestation objects
+        attestation = deserialize_attestation(attestation_bytes)
+        expected_receipt = recover_receipt(digests[0], leaf_set, attestation)
+        
+        # Capture stdout from CLI
+        old_stdout = sys.stdout
+        sys.stdout = BytesIO()
+        # Also need to set buffer attribute for sys.stdout.buffer access
+        sys.stdout.buffer = sys.stdout
+        try:
+            fingerprint = digests[0].hex()
+            result = main(["recover", fingerprint, "--epochs", str(self.temp_dir)])
+            output = sys.stdout.getvalue()
+        finally:
+            sys.stdout = old_stdout
+        
+        self.assertEqual(result, 0)
+        self.assertEqual(output, expected_receipt)
+
+    def test_recover_unknown_digest(self):
+        """Recover for an unknown digest exits 1 with clear error."""
+        import hashlib
+        
+        digests = [hashlib.sha256(b"document1").digest()]
+        self._create_test_epoch(42, digests)
+        
+        # Try to recover a different digest
+        other_digest = hashlib.sha256(b"other").hexdigest()
+        result = main(["recover", other_digest, "--epochs", str(self.temp_dir)])
+        self.assertEqual(result, 1)
+
+    def test_recover_file_path(self):
+        """Recover using a file path instead of hex fingerprint."""
+        import hashlib
+        from zeitwerk.epochtree import recover_receipt
+        from zeitwerk.attestation import deserialize_attestation
+        from io import BytesIO
+        import sys
+        
+        digests = [hashlib.sha256(b"document1").digest()]
+        _, _, leaf_set, attestation_bytes = self._create_test_epoch(42, digests)
+        
+        # Create a temp file
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
+            f.write("document1")
+            f.flush()
+            temp_path = f.name
+        
+        try:
+            # Get expected receipt using library directly
+            attestation = deserialize_attestation(attestation_bytes)
+            expected_receipt = recover_receipt(digests[0], leaf_set, attestation)
+            
+            # Capture stdout from CLI
+            old_stdout = sys.stdout
+            sys.stdout = BytesIO()
+            sys.stdout.buffer = sys.stdout
+            try:
+                result = main(["recover", temp_path, "--epochs", str(self.temp_dir)])
+                output = sys.stdout.getvalue()
+            finally:
+                sys.stdout = old_stdout
+            
+            self.assertEqual(result, 0)
+            self.assertEqual(output, expected_receipt)
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
+
+    def test_recover_repo_not_found(self):
+        """Recover with non-existent repository."""
+        import hashlib
+        
+        fingerprint = hashlib.sha256(b"test").hexdigest()
+        result = main(["recover", fingerprint, "--epochs", "/nonexistent/repo"])
+        self.assertEqual(result, 2)
+
+
 class MainTests(unittest.TestCase):
     """Tests for main() argument parsing."""
 
@@ -220,10 +347,11 @@ class MainTests(unittest.TestCase):
             main(["verify"])
         self.assertEqual(ctx.exception.code, 2)
 
-    def test_recover_not_implemented(self):
-        """Recover command not yet implemented."""
-        result = main(["recover", "test.txt", "--epochs", "/tmp"])
-        self.assertEqual(result, 2)
+    def test_recover_no_epochs(self):
+        """Recover without --epochs should fail."""
+        with self.assertRaises(SystemExit) as ctx:
+            main(["recover", "test.txt"])
+        self.assertEqual(ctx.exception.code, 2)
 
 
 if __name__ == "__main__":

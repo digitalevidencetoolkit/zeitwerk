@@ -82,6 +82,49 @@ def find_epoch_for_digest(repo: Path, digest: bytes) -> int | None:
     return None
 
 
+def cmd_recover(args: argparse.Namespace) -> int:
+    """Recover a receipt from the public epoch repository.
+    
+    This is the "I lost the receipt" mode: rebuild it from the published
+    record and output to stdout.
+    
+    Returns exit code: 0=success, 1=not found, 2=bad input
+    """
+    from zeitwerk.publisher import read_epoch
+    from zeitwerk.epochtree import recover_receipt
+    from zeitwerk.attestation import deserialize_attestation
+    
+    digest = parse_fingerprint(args.file)
+    repo = Path(args.epochs)
+    
+    if not repo.exists():
+        print(f"Error: Repository not found: {args.epochs}", file=sys.stderr)
+        return 2
+    
+    # Find the epoch containing this digest
+    epoch = find_epoch_for_digest(repo, digest)
+    if epoch is None:
+        print(f"Error: No epoch found containing fingerprint {digest.hex()}", file=sys.stderr)
+        return 1
+    
+    try:
+        # Read epoch data
+        leaf_set, root, attestation_bytes = read_epoch(repo, epoch)
+        # Deserialize the attestation
+        attestation = deserialize_attestation(attestation_bytes)
+        # Recover the receipt
+        receipt = recover_receipt(digest, leaf_set, attestation)
+        # Output to stdout
+        sys.stdout.buffer.write(receipt)
+        return 0
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+
+
 def cmd_verify_epochs(args: argparse.Namespace) -> int:
     """Verify a document against the public epoch repository.
 
@@ -207,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to the witness public key file"
     )
 
-    # recover command (placeholder for now, will be implemented in session 2)
+    # recover command
     recover_parser = subparsers.add_parser("recover", help="Recover a receipt from the public record")
     recover_parser.add_argument(
         "file",
@@ -235,10 +278,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print("Error: Must specify either --epochs or --receipt --key", file=sys.stderr)
             return 2
-
+    
     elif args.command == "recover":
-        print("Error: recover command not yet implemented", file=sys.stderr)
-        return 2
+        return cmd_recover(args)
 
     else:
         print(f"Error: Unknown command: {args.command}", file=sys.stderr)
