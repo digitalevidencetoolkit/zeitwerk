@@ -1,10 +1,17 @@
 """Tests for the SQLite store."""
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from zeitwerk.store import Store, EpochClosed, EpochFull
+
+# The epochs table as the witness server v0 (#17) created it: no `published` column.
+SCHEMA_BEFORE_PUBLISHING = """
+CREATE TABLE submissions (digest BLOB NOT NULL, epoch INTEGER NOT NULL, PRIMARY KEY (digest, epoch));
+CREATE TABLE epochs (epoch INTEGER PRIMARY KEY, leaf_set BLOB NOT NULL, root BLOB, attestation BLOB);
+"""
 
 DIGEST = b"\x01" * 32
 DIGEST2 = b"\x02" * 32
@@ -25,6 +32,17 @@ class StoreOpenTests(unittest.TestCase):
     def test_reopening_an_existing_store_works(self):
         Store(self.path).close()
         Store(self.path).close()  # raises if the schema can't be applied twice
+
+    def test_a_database_from_before_publishing_gains_the_published_column(self):
+        """Sealed hours in a pre-upgrade database come out as unpublished, not as an error."""
+        with sqlite3.connect(self.path) as conn:
+            conn.executescript(SCHEMA_BEFORE_PUBLISHING)
+            conn.execute("INSERT INTO epochs VALUES (?, ?, ?, ?)", (EPOCH, DIGEST, b"r" * 32, b"att"))
+        store = Store(self.path)
+        self.addCleanup(store.close)
+        self.assertEqual(store.unpublished_epochs(), [EPOCH])
+        store.mark_published(EPOCH)
+        self.assertEqual(store.unpublished_epochs(), [])
 
 
 class StoreSubmissionTests(unittest.TestCase):
@@ -174,6 +192,61 @@ class StoreUnsealedEpochsTests(unittest.TestCase):
     def test_leaves_out_a_closed_empty_hour(self):
         self.store.close_epoch(EPOCH)
         self.assertEqual(self.store.unsealed_epochs(before=EPOCH2), [])
+
+
+class StoreSealedEpochTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.addCleanup(self.store.close)
+
+    def test_unknown_epoch_is_none(self):
+        self.assertIsNone(self.store.sealed_epoch(EPOCH))
+
+    def test_closed_but_unsealed_is_none(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        self.store.close_epoch(EPOCH)
+        self.assertIsNone(self.store.sealed_epoch(EPOCH))
+
+    def test_sealed_epoch_returns_leaf_set_and_attestation(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        attestation = _seal(self.store, EPOCH)
+        leaf_set, returned_attestation = self.store.sealed_epoch(EPOCH)
+        self.assertEqual(leaf_set, DIGEST)
+        self.assertEqual(returned_attestation, attestation)
+
+
+class StorePublishTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.addCleanup(self.store.close)
+
+    def test_empty_store_has_nothing_to_publish(self):
+        self.assertEqual(self.store.unpublished_epochs(), [])
+
+    def test_sealed_epoch_is_unpublished(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        _seal(self.store, EPOCH)
+        self.assertEqual(self.store.unpublished_epochs(), [EPOCH])
+
+    def test_published_epoch_is_not_listed(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        _seal(self.store, EPOCH)
+        self.store.mark_published(EPOCH)
+        self.assertEqual(self.store.unpublished_epochs(), [])
+
+    def test_multiple_sealed_epochs_oldest_first(self):
+        self.store.add_submission(DIGEST, EPOCH2)
+        self.store.add_submission(DIGEST, EPOCH)
+        _seal(self.store, EPOCH)
+        _seal(self.store, EPOCH2)
+        self.assertEqual(self.store.unpublished_epochs(), [EPOCH, EPOCH2])
+
+    def test_mark_published_is_idempotent(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        _seal(self.store, EPOCH)
+        self.store.mark_published(EPOCH)
+        self.store.mark_published(EPOCH)  # second call is a no-op
+        self.assertEqual(self.store.unpublished_epochs(), [])
 
 
 class StoreSealedForTests(unittest.TestCase):
