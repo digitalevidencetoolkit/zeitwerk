@@ -353,6 +353,114 @@ class RecoverTests(unittest.TestCase):
         self.assertEqual(result, 2)
 
 
+class VerifyReceiptTests(unittest.TestCase):
+    """Tests for verify --receipt --key command."""
+
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _create_signed_tree(self, digests, epoch=42):
+        """Helper to create a tree with a signed attestation."""
+        from zeitwerk.epochtree import build_epoch_tree
+        from zeitwerk.witness import signed_attestation
+        from zeitwerk.signer import Signer
+        
+        signer = Signer()
+        tree = build_epoch_tree(digests)
+        tree.tip.attestations.add(signed_attestation(signer, epoch, tree.root))
+        return tree, signer
+
+    def test_good_receipt_with_correct_key(self):
+        """Verify a valid receipt with the correct public key."""
+        import hashlib
+        
+        digests = [hashlib.sha256(b"document1").digest()]
+        tree, signer = self._create_signed_tree(digests)
+        receipt = tree.receipt_bytes(digests[0])
+        
+        # Write receipt and key to temp files
+        receipt_file = self.temp_dir / "receipt.ots"
+        key_file = self.temp_dir / "key.pub"
+        receipt_file.write_bytes(receipt)
+        key_file.write_bytes(signer.public_key)
+        
+        fingerprint = digests[0].hex()
+        result = main(["verify", fingerprint, "--receipt", str(receipt_file), "--key", str(key_file)])
+        self.assertEqual(result, 0)
+
+    def test_good_receipt_with_wrong_key(self):
+        """Verify a valid receipt with a different public key."""
+        import hashlib
+        from zeitwerk.signer import Signer
+        
+        digests = [hashlib.sha256(b"document1").digest()]
+        tree, _ = self._create_signed_tree(digests)
+        receipt = tree.receipt_bytes(digests[0])
+        
+        # Write receipt and a different key to temp files
+        receipt_file = self.temp_dir / "receipt.ots"
+        key_file = self.temp_dir / "key.pub"
+        receipt_file.write_bytes(receipt)
+        
+        # Use a different signer's key
+        wrong_signer = Signer()
+        key_file.write_bytes(wrong_signer.public_key)
+        
+        fingerprint = digests[0].hex()
+        result = main(["verify", fingerprint, "--receipt", str(receipt_file), "--key", str(key_file)])
+        self.assertEqual(result, 1)
+
+    def test_tampered_receipt(self):
+        """Verify a tampered/modified receipt."""
+        import hashlib
+        
+        digests = [hashlib.sha256(b"document1").digest()]
+        tree, signer = self._create_signed_tree(digests)
+        receipt = tree.receipt_bytes(digests[0])
+        
+        # Tamper with the receipt (flip a bit)
+        tampered_receipt = bytearray(receipt)
+        if len(tampered_receipt) > 0:
+            tampered_receipt[0] ^= 0xFF  # Flip all bits in first byte
+        
+        # Write tampered receipt and key to temp files
+        receipt_file = self.temp_dir / "receipt.ots"
+        key_file = self.temp_dir / "key.pub"
+        receipt_file.write_bytes(bytes(tampered_receipt))
+        key_file.write_bytes(signer.public_key)
+        
+        fingerprint = digests[0].hex()
+        result = main(["verify", fingerprint, "--receipt", str(receipt_file), "--key", str(key_file)])
+        self.assertEqual(result, 1)
+
+    def test_fingerprint_absent_from_receipt(self):
+        """Verify with a fingerprint that doesn't match the receipt."""
+        import hashlib
+        
+        digests = [
+            hashlib.sha256(b"document1").digest(),
+            hashlib.sha256(b"document2").digest(),
+        ]
+        tree, signer = self._create_signed_tree(digests)
+        # Get receipt for first digest
+        receipt = tree.receipt_bytes(digests[0])
+        
+        # Write receipt and key to temp files
+        receipt_file = self.temp_dir / "receipt.ots"
+        key_file = self.temp_dir / "key.pub"
+        receipt_file.write_bytes(receipt)
+        key_file.write_bytes(signer.public_key)
+        
+        # Try to verify with the second digest (not in this receipt)
+        fingerprint = digests[1].hex()
+        result = main(["verify", fingerprint, "--receipt", str(receipt_file), "--key", str(key_file)])
+        self.assertEqual(result, 1)
+
+
 class MainTests(unittest.TestCase):
     """Tests for main() argument parsing."""
 

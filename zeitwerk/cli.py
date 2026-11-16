@@ -110,6 +110,40 @@ def cmd_recover(args: argparse.Namespace) -> int:
         return 2
 
 
+def cmd_verify_receipt(args: argparse.Namespace) -> int:
+    """Verify a receipt against a witness public key.
+    
+    This is the "I have the receipt" mode: check it against the witness's
+    public key.
+    
+    Returns exit code: 0=verified, 1=not verified, 2=bad input
+    """
+    from zeitwerk.witness import verify_signed_receipt
+    
+    digest = parse_fingerprint(args.file)
+    receipt_path = Path(args.receipt)
+    key_path = Path(args.key)
+    
+    if not receipt_path.exists():
+        print(f"Error: Receipt file not found: {args.receipt}", file=sys.stderr)
+        return 2
+    if not key_path.exists():
+        print(f"Error: Key file not found: {args.key}", file=sys.stderr)
+        return 2
+    
+    receipt = receipt_path.read_bytes()
+    pubkey = key_path.read_bytes()
+    
+    if verify_signed_receipt(digest, receipt, pubkey):
+        print(f"fingerprint  {digest.hex()}")
+        print("VERIFIED     signature valid")
+        return 0
+    else:
+        print(f"fingerprint  {digest.hex()}", file=sys.stderr)
+        print("NOT VERIFIED signature does not verify", file=sys.stderr)
+        return 1
+
+
 def cmd_verify_epochs(args: argparse.Namespace) -> int:
     """Verify a document against the public epoch repository.
 
@@ -258,8 +292,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.epochs:
             return cmd_verify_epochs(args)
         elif args.receipt and args.key:
-            print("Error: verify --receipt --key not yet implemented", file=sys.stderr)
-            return 2
+            return cmd_verify_receipt(args)
         else:
             print("Error: Must specify either --epochs or --receipt --key", file=sys.stderr)
             return 2
