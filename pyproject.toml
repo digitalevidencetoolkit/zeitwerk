@@ -18,6 +18,9 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 
+[project.scripts]
+zeitwerk = "zeitwerk.cli:main"
+
 [project.urls]
 Homepage = "https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/"
 Repository = "https://github.com/digitalevidencetoolkit/zeitwerk"
