@@ -152,7 +152,12 @@ def recovered_receipt(repo: str | Path, digest: bytes, epoch: int) -> bytes | No
 
 
 def verify_signed_receipt(digest: bytes, receipt: bytes, pubkey: bytes) -> bool:
-    """Verify a signed receipt offline with only the public key (issue #17).
+    """Verify a signed receipt offline with only the public key (issue #17)."""
+    return signed_receipt_epoch(digest, receipt, pubkey) is not None  # epoch 0 is falsy
+
+
+def signed_receipt_epoch(digest: bytes, receipt: bytes, pubkey: bytes) -> int | None:
+    """The hour a signed receipt vouches for under this key, or None if it doesn't verify.
 
     The root isn't stored in the attestation: it's the receipt node the
     attestation hangs on. The signature covers it, along with the epoch.
@@ -162,7 +167,7 @@ def verify_signed_receipt(digest: bytes, receipt: bytes, pubkey: bytes) -> bool:
     try:
         stamp = Timestamp.deserialize(BytesDeserializationContext(receipt), digest)
     except DeserializationError:
-        return False
+        return None
     for root, unknown in stamp.all_attestations():
         try:  # stock OTS parses our tag as UnknownAttestation
             att = deserialize_attestation(serialize_attestation(unknown))
@@ -179,5 +184,5 @@ def verify_signed_receipt(digest: bytes, receipt: bytes, pubkey: bytes) -> bool:
             and Signer.verify(pubkey, att.epoch, root, att.anchor_ref[KEY_ID_SIZE:])
             and verify_receipt(digest, receipt, root)
         ):
-            return True
-    return False
+            return att.epoch
+    return None

@@ -18,6 +18,7 @@ from zeitwerk.witness import (
     pending_receipt,
     publish_due,
     signed_attestation,
+    signed_receipt_epoch,
     upgraded_receipt,
     verify_signed_receipt,
 )
@@ -84,6 +85,27 @@ class VerifySignedReceiptTests(unittest.TestCase):
 
     def test_garbage_receipt_fails(self):
         self.assertFalse(verify_signed_receipt(self.digests[0], b"\xff" * 10, self.signer.public_key))
+
+
+class SignedReceiptEpochTests(unittest.TestCase):
+    """signed_receipt_epoch: the hour a good receipt vouches for."""
+
+    def setUp(self):
+        self.signer = Signer()
+        self.digests = _digests(3)
+
+    def test_names_the_signed_hour(self):
+        receipt = _signed_tree(self.signer, self.digests, epoch=498566).receipt_bytes(self.digests[0])
+        self.assertEqual(signed_receipt_epoch(self.digests[0], receipt, self.signer.public_key), 498566)
+
+    def test_hour_zero_still_verifies(self):
+        """Epoch 0 is falsy: verify_signed_receipt must not mistake it for a failure."""
+        receipt = _signed_tree(self.signer, self.digests, epoch=0).receipt_bytes(self.digests[0])
+        self.assertTrue(verify_signed_receipt(self.digests[0], receipt, self.signer.public_key))
+
+    def test_a_receipt_that_does_not_verify_has_no_hour(self):
+        receipt = _signed_tree(self.signer, self.digests).receipt_bytes(self.digests[0])
+        self.assertIsNone(signed_receipt_epoch(self.digests[0], receipt, Signer().public_key))
 
 
 def _hour(epoch):
