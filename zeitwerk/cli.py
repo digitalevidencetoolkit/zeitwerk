@@ -41,6 +41,13 @@ def parse_fingerprint(arg: str) -> bytes:
     return h.digest()
 
 
+def format_hour(epoch: int) -> str:
+    """The epoch number and the hour it names: '498566 = 2026-11-16 14:00 UTC'."""
+    from zeitwerk.publisher import epoch_start
+
+    return f"{epoch} = {epoch_start(epoch).strftime('%Y-%m-%d %H:00 UTC')}"
+
+
 def leaf_files(repo: Path) -> list[Path]:
     """Every published leaves.hex in the repository, oldest epoch first.
 
@@ -118,8 +125,8 @@ def cmd_verify_receipt(args: argparse.Namespace) -> int:
     
     Returns exit code: 0=verified, 1=not verified, 2=bad input
     """
-    from zeitwerk.witness import verify_signed_receipt
-    
+    from zeitwerk.witness import signed_receipt_epoch
+
     digest = parse_fingerprint(args.file)
     receipt_path = Path(args.receipt)
     key_path = Path(args.key)
@@ -134,14 +141,15 @@ def cmd_verify_receipt(args: argparse.Namespace) -> int:
     receipt = receipt_path.read_bytes()
     pubkey = key_path.read_bytes()
     
-    if verify_signed_receipt(digest, receipt, pubkey):
-        print(f"fingerprint  {digest.hex()}")
-        print("VERIFIED     signature valid")
-        return 0
-    else:
+    epoch = signed_receipt_epoch(digest, receipt, pubkey)
+    if epoch is None:
         print(f"fingerprint  {digest.hex()}", file=sys.stderr)
         print("NOT VERIFIED signature does not verify", file=sys.stderr)
         return 1
+    print(f"fingerprint  {digest.hex()}")
+    print(f"hour         {format_hour(epoch)}")
+    print("VERIFIED     signature valid over (hour, root)")
+    return 0
 
 
 def cmd_verify_epochs(args: argparse.Namespace) -> int:
@@ -152,7 +160,7 @@ def cmd_verify_epochs(args: argparse.Namespace) -> int:
 
     Returns exit code: 0=verified, 1=not verified, 2=bad input
     """
-    from zeitwerk.publisher import verify_published, epoch_start
+    from zeitwerk.publisher import verify_published
     from zeitwerk.epochtree import verify_non_inclusion, decode_leaf_set, build_epoch_tree
 
     digest = parse_fingerprint(args.file)
@@ -186,8 +194,7 @@ def cmd_verify_epochs(args: argparse.Namespace) -> int:
         leaves = decode_leaf_set(leaf_set)
 
         print(f"fingerprint  {digest.hex()}")
-        start = epoch_start(epoch)
-        print(f"hour         {epoch} = {start.strftime('%Y-%m-%d %H:00 UTC')}")
+        print(f"hour         {format_hour(epoch)}")
         print(f"leaf set     {len(leaves)} fingerprints, root {root.hex()} matches")
 
         att = deserialize_attestation(attestation)
@@ -211,9 +218,8 @@ def cmd_verify_epochs(args: argparse.Namespace) -> int:
                 tree = build_epoch_tree(leaves)
 
                 if tree.root == root and digest not in set(leaves):
-                    start = epoch_start(epoch)
                     print(f"fingerprint  {digest.hex()}", file=sys.stderr)
-                    print(f"hour         {epoch} = {start.strftime('%Y-%m-%d %H:00 UTC')}", file=sys.stderr)
+                    print(f"hour         {format_hour(epoch)}", file=sys.stderr)
                     print(f"leaf set     {len(leaves)} fingerprints, root {root.hex()} matches", file=sys.stderr)
                     print(f"NOT VERIFIED fingerprint not in leaf set", file=sys.stderr)
                     return 1

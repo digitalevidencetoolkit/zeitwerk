@@ -392,6 +392,23 @@ class VerifyReceiptTests(unittest.TestCase):
         result = main(["verify", fingerprint, "--receipt", str(receipt_file), "--key", str(key_file)])
         self.assertEqual(result, 0)
 
+    def test_good_receipt_prints_its_hour(self):
+        """A verified receipt says which hour it proves, not only that it verifies."""
+        import contextlib
+        import hashlib
+        import io
+
+        digests = [hashlib.sha256(b"document1").digest()]
+        tree, signer = self._create_signed_tree(digests, epoch=498566)
+        receipt_file = self.temp_dir / "receipt.ots"
+        key_file = self.temp_dir / "key.pub"
+        receipt_file.write_bytes(tree.receipt_bytes(digests[0]))
+        key_file.write_bytes(signer.public_key)
+
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            main(["verify", digests[0].hex(), "--receipt", str(receipt_file), "--key", str(key_file)])
+        self.assertIn("hour         498566 = 2026-11-16 14:00 UTC", out.getvalue())
+
     def test_good_receipt_with_wrong_key(self):
         """Verify a valid receipt with a different public key."""
         import hashlib
