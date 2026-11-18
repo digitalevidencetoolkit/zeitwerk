@@ -124,12 +124,7 @@ summary { cursor: pointer; color: var(--link); }
   <div id="meta" class="note"></div>
   <noscript><p>This page needs JavaScript to draw; the same numbers are in <a href="status.json">status.json</a>.</p></noscript>
 
-  <div class="tiles">
-    <div class="tile"><div class="label">Fingerprints received</div><div class="value" id="t-fingerprints">–</div><div class="sub" id="t-fingerprints-sub"></div></div>
-    <div class="tile"><div class="label">Hours sealed</div><div class="value" id="t-sealed">–</div><div class="sub" id="t-sealed-sub"></div></div>
-    <div class="tile"><div class="label">This hour</div><div class="value" id="t-open">–</div><div class="sub" id="t-open-sub"></div></div>
-    <div class="tile"><div class="label">Mirrors</div><div class="value" id="t-mirrors">–</div><div class="sub" id="t-mirrors-sub"></div></div>
-  </div>
+  <div class="tiles" id="tiles"></div>
 
   <hr>
   <h4>Fingerprints per hour, last 7 days</h4>
@@ -223,20 +218,26 @@ function renderHealth(data) {
     `Checked ${dateLabel.format(new Date(data.now * 1000))} UTC · up since ${dateLabel.format(new Date(data.started * 1000))} UTC`;
 }
 
+function tile(label, value, ...sub) {
+  return el("div", { className: "tile" },
+    el("div", { className: "label", textContent: label }),
+    el("div", { className: "value", textContent: value }),
+    el("div", { className: "sub" }, ...sub),
+  );
+}
+
 function renderTiles(data) {
   const open = data.hours.find((hour) => hour.epoch === data.epoch);
   const closesIn = Math.ceil(((data.epoch + 1) * 3600 - data.now) / 60);
   const week = data.hours.reduce((sum, hour) => sum + hour.fingerprints, 0);
-  $("t-fingerprints").textContent = number(data.fingerprints);
-  $("t-fingerprints-sub").textContent = `${number(week)} in the last 7 days`;
-  $("t-sealed").textContent = number(data.hours_sealed);
-  $("t-sealed-sub").textContent = `${number(data.hours_published)} published`;
-  $("t-open").textContent = number(open ? open.fingerprints : 0);
-  $("t-open-sub").textContent = `seals in ${closesIn} min`;
-  const mirrors = data.mirrors || [];
-  $("t-mirrors").textContent = data.mirrors === null ? "?" : number(mirrors.length);
-  const kinds = [...new Set(mirrors.map((m) => m.kind))];
-  $("t-mirrors-sub").replaceChildren(...kinds.flatMap((kind) => [el("span", { className: "pill", textContent: kind }), " "]));
+  const kinds = [...new Set((data.mirrors || []).map((m) => m.kind))];
+  $("tiles").replaceChildren(
+    tile("Fingerprints received", number(data.fingerprints), `${number(week)} in the last 7 days`),
+    tile("Hours sealed", number(data.hours_sealed), `${number(data.hours_published)} published`),
+    tile("This hour", number(open ? open.fingerprints : 0), `seals in ${closesIn} min`),
+    tile("Mirrors", data.mirrors === null ? "?" : number(data.mirrors.length),
+      ...kinds.flatMap((kind) => [el("span", { className: "pill", textContent: kind }), " "])),
+  );
 }
 
 function renderMirrors(data) {
