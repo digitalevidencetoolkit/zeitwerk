@@ -291,5 +291,44 @@ class StoreSealedForTests(unittest.TestCase):
             self.store.sealed_for(b"\x01" * 31)
 
 
+class StoreStatusTests(unittest.TestCase):
+    """The counts behind the status page."""
+
+    def setUp(self):
+        self.store = Store(":memory:")
+        self.addCleanup(self.store.close)
+
+    def test_an_empty_store_has_no_hours_and_zero_totals(self):
+        self.assertEqual(self.store.hour_counts(since=0), [])
+        self.assertEqual(self.store.totals(), (0, 0, 0))
+
+    def test_hour_counts_follow_each_hour_from_open_to_published(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        self.store.add_submission(DIGEST2, EPOCH)
+        self.store.add_submission(DIGEST, EPOCH2)
+        self.store.add_submission(DIGEST, EPOCH2 + 1)
+        _seal(self.store, EPOCH)
+        _seal(self.store, EPOCH2)
+        self.store.mark_published(EPOCH)
+        self.assertEqual(
+            self.store.hour_counts(since=0),
+            [(EPOCH, 2, True, True), (EPOCH2, 1, True, False), (EPOCH2 + 1, 1, False, False)],
+        )
+
+    def test_hour_counts_leave_out_hours_before_since(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        self.store.add_submission(DIGEST, EPOCH2)
+        self.assertEqual(self.store.hour_counts(since=EPOCH2), [(EPOCH2, 1, False, False)])
+
+    def test_totals_count_fingerprints_and_hours_sealed_and_published(self):
+        self.store.add_submission(DIGEST, EPOCH)
+        self.store.add_submission(DIGEST2, EPOCH)
+        self.store.add_submission(DIGEST, EPOCH2)
+        _seal(self.store, EPOCH)
+        _seal(self.store, EPOCH2)
+        self.store.mark_published(EPOCH)
+        self.assertEqual(self.store.totals(), (3, 2, 1))
+
+
 if __name__ == "__main__":
     unittest.main()
