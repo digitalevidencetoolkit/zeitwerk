@@ -191,6 +191,33 @@ class Store:
                 (epoch,),
             ).fetchone()
 
+    def hour_counts(self, since: int) -> list[tuple[int, int, bool, bool]]:
+        """(epoch, fingerprints, sealed, published) per hour with submissions, from `since` on.
+
+        Oldest first. What the status page charts; an hour turns latecomers
+        away once closed, so its count here is its published leaf count.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT s.epoch, COUNT(*), e.attestation IS NOT NULL, e.published IS NOT NULL
+                   FROM submissions s
+                   LEFT JOIN epochs e ON e.epoch = s.epoch
+                   WHERE s.epoch >= ?
+                   GROUP BY s.epoch
+                   ORDER BY s.epoch""",
+                (since,),
+            )
+            return [(epoch, count, bool(sealed), bool(published)) for epoch, count, sealed, published in rows]
+
+    def totals(self) -> tuple[int, int, int]:
+        """(fingerprints, hours sealed, hours published), over everything stored."""
+        with self._lock:
+            (fingerprints,) = self._conn.execute("SELECT COUNT(*) FROM submissions").fetchone()
+            sealed, published = self._conn.execute(
+                "SELECT COUNT(attestation), COUNT(published) FROM epochs"  # COUNT(column) skips NULLs
+            ).fetchone()
+            return fingerprints, sealed, published
+
     def sealed_for(self, digest: bytes) -> tuple[bytes, bytes] | None:
         """The earliest sealed hour holding this fingerprint, or None.
 

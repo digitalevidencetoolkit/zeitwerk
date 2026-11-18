@@ -154,3 +154,25 @@ def push(repo: Path, timeout: float = 30.0) -> dict[str, str | None]:
             result[remote] = e.stderr if isinstance(e, CalledProcessError) else str(e)
 
     return result
+
+
+def remote_status(repo: Path) -> list[tuple[str, str, int, int | None]]:
+    """(name, push URL, commits not yet pushed, commit time of the newest it has) per remote.
+
+    What the status page shows for each mirror. Read from the tracking refs a
+    successful push leaves behind, so nothing goes over the network. A remote
+    never pushed to has every commit on main still to come, and no time.
+    """
+    has_main = _git(repo, "rev-parse", "--verify", "--quiet", "main", check=False).returncode == 0
+    status = []
+    for line in _git(repo, "remote", "-v").stdout.splitlines():
+        name, _, rest = line.partition("\t")
+        url, _, direction = rest.rpartition(" ")
+        if direction != "(push)":
+            continue
+        unpushed = 0
+        if has_main:
+            unpushed = int(_git(repo, "rev-list", "--count", "main", "--not", f"--remotes={name}").stdout)
+        last = _git(repo, "log", "-1", "--format=%ct", f"--remotes={name}").stdout.strip()
+        status.append((name, url, unpushed, int(last) if last else None))
+    return status

@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zeitwerk witness</title>
+<meta name="description" content="The health and status of this Zeitwerk timestamping witness: hours sealed, fingerprints received, mirrors.">
+<!-- Served by the witness itself (GET /), numbers from status.json. No external requests. -->
+<style>
+:root {
+  --width: 800px;
+  --font: "PT Serif", serif;
+  --bg: #fbfbfb;
+  --heading: #222;
+  --text: #444;
+  --muted: #777;
+  --link: #3273dc;
+  --code-bg: #f2f2f2;
+  --rule: #ddd;
+  --pill: #f0f0f0;
+  --grid: #e4e4e4;
+  --bar: #2a78d6;
+  --bar-open: #86b6ef;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --unknown: #999;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #333;
+    --heading: #eee;
+    --text: #ddd;
+    --muted: #aaa;
+    --link: #8cc2dd;
+    --code-bg: #444;
+    --rule: #555;
+    --pill: #444;
+    --grid: #484848;
+    --bar: #6da7ec;
+    --bar-open: #2a78d6;
+  }
+}
+body {
+  font-family: var(--font);
+  font-size: 1.2em;
+  margin: auto;
+  padding: 20px;
+  max-width: var(--width);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  overflow-wrap: break-word;
+}
+h1, h2, h3, h4 { font-family: var(--font); color: var(--heading); }
+h2 { font-size: 1.4rem; }
+h4 { margin-bottom: .3em; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+nav a { margin-right: 8px; }
+.title:hover { text-decoration: none; }
+strong, b { color: var(--heading); }
+hr { border: 0; border-top: 1px dashed; margin: 1.8em 0; }
+code { font-family: monospace; padding: 2px; background: var(--code-bg); border-radius: 3px; }
+table { width: 100%; border-collapse: collapse; font-size: .9em; }
+th { text-align: left; font-weight: normal; color: var(--muted); }
+th, td { padding: .4em .6em .4em 0; border-top: 1px solid var(--rule); vertical-align: top; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+footer { padding: 25px 0; text-align: center; font-size: .85em; color: var(--muted); }
+
+.note { color: var(--muted); font-size: .9em; margin-top: 0; }
+.health { font-size: 1.15em; margin: 1.2em 0 .2em; }
+.health .dot {
+  display: inline-block; width: .7em; height: .7em; border-radius: 50%;
+  background: var(--unknown); margin-right: .35em; vertical-align: .05em;
+}
+.health.good .dot { background: var(--good); }
+.health.warning .dot { background: var(--warning); }
+.health ul { margin: .3em 0 0; padding-left: 1.4em; font-size: .85em; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin: 1.5rem 0 0; }
+.tile .label { font-size: .85em; color: var(--muted); }
+.tile .value { font-size: 2em; color: var(--heading); line-height: 1.2; }
+.tile .sub { font-size: .8em; color: var(--muted); }
+
+.pill { background: var(--pill); border-radius: 2em; padding: .15em .7em; font-size: .85em; white-space: nowrap; }
+
+.chart { position: relative; margin-top: .6em; }
+.chart svg { display: block; width: 100%; height: 180px; overflow: visible; }
+.chart text { fill: var(--muted); font-family: var(--font); font-size: 12px; }
+.chart .grid { stroke: var(--grid); stroke-width: 1; shape-rendering: crispEdges; }
+.chart .bar { fill: var(--bar); }
+.chart .bar.open { fill: var(--bar-open); }
+.chart .bar.hover { opacity: .7; }
+.chart .cursor { stroke: var(--muted); stroke-width: 1; shape-rendering: crispEdges; }
+.tip {
+  position: absolute; pointer-events: none; display: none; white-space: nowrap;
+  background: var(--bg); border: 1px solid var(--rule); border-radius: 4px;
+  padding: .3em .6em; font-size: .8em; box-shadow: 0 2px 6px rgba(0, 0, 0, .12);
+}
+.tip strong { display: block; font-size: 1.15em; }
+.legend { font-size: .8em; color: var(--muted); margin: .4em 0 0; }
+.legend .key { display: inline-block; width: .8em; height: .8em; border-radius: 2px; background: var(--bar); margin: 0 .3em 0 0; vertical-align: -.05em; }
+.legend .key.open { background: var(--bar-open); margin-left: 1em; }
+details { margin-top: .8em; font-size: .9em; }
+summary { cursor: pointer; color: var(--link); }
+.scroll { overflow-x: auto; }
+.stale main > :not(#health) { opacity: .6; }
+</style>
+</head>
+<body>
+<header>
+  <a href="./" class="title"><h2>Zeitwerk</h2></a>
+  <nav>
+    <a href="https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/">About</a>
+    <a href="https://github.com/digitalevidencetoolkit/zeitwerk">Code</a>
+    <a href="status.json">Data</a>
+  </nav>
+</header>
+
+<main>
+  <p>This is a <b>Zeitwerk witness</b>. Every hour, it seals the SHA-256 fingerprints it was sent into one tree, signs the root, and publishes the whole list to public git mirrors. It never sees a document.</p>
+
+  <div id="health" class="health"><span class="dot"></span><b id="health-label">Loading…</b><ul id="health-detail"></ul></div>
+  <div id="meta" class="note"></div>
+  <noscript><p>This page needs JavaScript to draw; the same numbers are in <a href="status.json">status.json</a>.</p></noscript>
+
+  <div class="tiles" id="tiles"></div>
+
+  <hr>
+  <h4>Fingerprints per hour, last 7 days</h4>
+  <p class="note">Hours in UTC. An hour nobody sent anything in has nothing to publish: that is not a gap.</p>
+  <div class="chart" id="chart"><div class="tip" id="tip"></div></div>
+  <div class="legend"><span class="key"></span>sealed<span class="key open"></span>this hour, still open</div>
+  <details>
+    <summary>As a table</summary>
+    <div class="scroll"><table>
+      <thead><tr><th>Hour (UTC)</th><th class="num">Fingerprints</th><th>State</th></tr></thead>
+      <tbody id="hours"></tbody>
+    </table></div>
+  </details>
+
+  <hr>
+  <h4>Mirrors</h4>
+  <p class="note">Each published hour is one commit, pushed to every mirror. A clone of any of them holds the whole record, so proofs outlive this witness.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Mirror</th><th>Kind</th><th>State</th><th>Updated</th></tr></thead>
+    <tbody id="mirrors"></tbody>
+  </table></div>
+
+  <hr>
+  <h4>Signers</h4>
+  <p id="signers"></p>
+</main>
+
+<footer>
+  <a href="https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/">Zeitwerk</a> is free, open-source timestamping without the blockchain ·
+  <a href="https://github.com/digitalevidencetoolkit/zeitwerk">source</a>
+</footer>
+
+<script>
+"use strict";
+const HOURS_SHOWN = 7 * 24;  // matches zeitwerk/status.py
+const REFRESH_MS = 60 * 1000;
+const SVG = "http://www.w3.org/2000/svg";
+const STATES = {
+  open: "still open",
+  sealing: "over, being sealed",
+  sealed: "sealed, being published",
+  published: "sealed and published",
+};
+
+const $ = (id) => document.getElementById(id);
+const number = (n) => n.toLocaleString("en-GB");
+const plural = (n, word) => `${number(n)} ${word}${n === 1 ? "" : "s"}`;
+const utc = (options) => new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", hourCycle: "h23", ...options });
+const dayLabel = utc({ weekday: "short", day: "numeric" });
+const hourLabel = utc({ weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const dateLabel = utc({ day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const epochDate = (epoch) => new Date(epoch * 3600 * 1000);
+
+// Build DOM from data with textContent only: remote names come from the operator's git config.
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  Object.assign(node, props);
+  node.append(...children);
+  return node;
+}
+function svg(tag, attrs = {}) {
+  const node = document.createElementNS(SVG, tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  return node;
+}
+
+function ago(seconds) {
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 2 * 86400) return `${Math.floor(seconds / 3600)} h ago`;
+  return `${Math.floor(seconds / 86400)} days ago`;
+}
+
+function mirrorState(mirror) {
+  if (mirror.unpushed === 0) return mirror.last_pushed === null ? "nothing to push yet" : "✓ up to date";
+  const behind = plural(mirror.unpushed, "commit");
+  return mirror.last_pushed === null ? `never pushed to (${behind})` : `${behind} behind`;
+}
+
+function renderHealth(data) {
+  const waiting = [];
+  if (data.to_seal) waiting.push(`${plural(data.to_seal, "finished hour")} to seal`);
+  if (data.to_publish) waiting.push(`${plural(data.to_publish, "sealed hour")} to publish`);
+  if (data.mirrors === null) waiting.push("the mirrors could not be read");
+  else for (const m of data.mirrors) if (m.unpushed) waiting.push(`${m.name}: ${mirrorState(m)}`);
+
+  $("health").className = "health " + (data.caught_up ? "good" : "warning");
+  $("health-label").textContent = data.caught_up ? "All caught up" : "Catching up";
+  $("health-detail").replaceChildren(...waiting.map((text) => el("li", { textContent: text })));
+  $("meta").textContent =
+    `Checked ${dateLabel.format(new Date(data.now * 1000))} UTC · up since ${dateLabel.format(new Date(data.started * 1000))} UTC`;
+}
+
+function tile(label, value, ...sub) {
+  return el("div", { className: "tile" },
+    el("div", { className: "label", textContent: label }),
+    el("div", { className: "value", textContent: value }),
+    el("div", { className: "sub" }, ...sub),
+  );
+}
+
+function renderTiles(data) {
+  const open = data.hours.find((hour) => hour.epoch === data.epoch);
+  const closesIn = Math.ceil(((data.epoch + 1) * 3600 - data.now) / 60);
+  const week = data.hours.reduce((sum, hour) => sum + hour.fingerprints, 0);
+  const kinds = [...new Set((data.mirrors || []).map((m) => m.kind))];
+  $("tiles").replaceChildren(
+    tile("Fingerprints received", number(data.fingerprints), `${number(week)} in the last 7 days`),
+    tile("Hours sealed", number(data.hours_sealed), `${number(data.hours_published)} published`),
+    tile("This hour", number(open ? open.fingerprints : 0), `seals in ${closesIn} min`),
+    tile("Mirrors", data.mirrors === null ? "?" : number(data.mirrors.length),
+      ...kinds.flatMap((kind) => [el("span", { className: "pill", textContent: kind }), " "])),
+  );
+}
+
+function renderMirrors(data) {
+  let rows;
+  if (data.mirrors === null) {
+    rows = [el("tr", {}, el("td", { colSpan: 4, textContent: "Could not read the mirrors: the witness logs say why." }))];
+  } else if (data.mirrors.length === 0) {
+    rows = [el("tr", {}, el("td", { colSpan: 4, textContent: "None yet: hours are published to the witness's own repository only." }))];
+  } else {
+    rows = data.mirrors.map((m) => el("tr", {},
+      el("td", {}, m.url ? el("a", { href: m.url, textContent: m.name }) : m.name),
+      el("td", {}, el("span", { className: "pill", textContent: m.kind })),
+      el("td", { textContent: mirrorState(m) }),
+      el("td", { textContent: m.last_pushed === null ? "–" : ago(data.now - m.last_pushed) }),
+    ));
+  }
+  $("mirrors").replaceChildren(...rows);
+}
+
+function renderSigners(data) {
+  $("signers").replaceChildren(
+    `${plural(data.signers.length, "signer")}: `,
+    ...data.signers.flatMap((id) => [el("code", { textContent: id }), " "]),
+    el("a", { href: "key", textContent: "public key" }),
+    el("br"),
+    el("span", { className: "note", textContent:
+      "v0 runs a single signer, which could forge an hour on its own. The federation adds independent institutions: forging then takes several of them colluding." }),
+  );
+}
+
+function renderTable(data) {
+  const rows = [...data.hours].reverse().map((hour) => el("tr", {},
+    el("td", { textContent: hourLabel.format(epochDate(hour.epoch)) }),
+    el("td", { className: "num", textContent: number(hour.fingerprints) }),
+    el("td", { textContent: STATES[hour.state] || hour.state }),
+  ));
+  if (rows.length === 0) rows.push(el("tr", {}, el("td", { colSpan: 3, textContent: "Nothing came in over the last 7 days." })));
+  $("hours").replaceChildren(...rows);
+}
+
+// Round up to 1, 2 or 5 × 10^k, so the top gridline is a clean number.
+function niceMax(value) {
+  const power = 10 ** Math.floor(Math.log10(value));
+  return [1, 2, 5, 10].map((step) => step * power).find((step) => step >= value);
+}
+
+function renderChart(data) {
+  const box = $("chart");
+  box.querySelector("svg")?.remove();
+  const width = box.clientWidth, height = 180;
+  const margin = { top: 8, right: 0, bottom: 22, left: 40 };
+  const plotW = width - margin.left - margin.right, plotH = height - margin.top - margin.bottom;
+  const first = data.epoch - HOURS_SHOWN + 1;
+  const hours = Array.from({ length: HOURS_SHOWN }, (_, i) => ({ epoch: first + i, fingerprints: 0, state: null }));
+  for (const hour of data.hours) hours[hour.epoch - first] = hour;
+
+  const top = niceMax(Math.max(1, ...hours.map((h) => h.fingerprints)));
+  const y = (value) => margin.top + plotH - (value / top) * plotH;
+  const slot = plotW / HOURS_SHOWN;
+  const gap = slot >= 6 ? 2 : 1;
+  const barW = Math.max(1, slot - gap);
+  const chart = svg("svg", { viewBox: `0 0 ${width} ${height}`, role: "img",
+    "aria-label": "Fingerprints per hour over the last 7 days; the table below has the numbers." });
+
+  const ticks = top % 2 === 0 ? [0, top / 2, top] : [0, top];
+  for (const tick of ticks) {
+    chart.append(svg("line", { class: "grid", x1: margin.left, x2: width, y1: y(tick), y2: y(tick) }));
+    const label = svg("text", { x: margin.left - 6, y: y(tick) + 4, "text-anchor": "end" });
+    label.textContent = number(tick);
+    chart.append(label);
+  }
+  hours.forEach((hour, i) => {
+    // A label at each midnight, every other one on a phone, none that would run off the end.
+    const x = margin.left + i * slot, labelW = 48;
+    const narrow = 24 * slot < labelW + 12;
+    if (hour.epoch % 24 !== 0 || (narrow && (hour.epoch / 24) % 2) || x + labelW > width) return;
+    const label = svg("text", { x, y: height - 4 });
+    label.textContent = dayLabel.format(epochDate(hour.epoch));
+    chart.append(label);
+  });
+
+  const bars = hours.map((hour, i) => {
+    if (!hour.fingerprints) return null;
+    const x = margin.left + i * slot + gap / 2, h = margin.top + plotH - y(hour.fingerprints);
+    const r = Math.min(4, barW / 2, h), base = margin.top + plotH, topY = base - h;
+    // Rounded at the data end, square on the baseline.
+    const d = `M${x},${base}V${topY + r}Q${x},${topY} ${x + r},${topY}H${x + barW - r}Q${x + barW},${topY} ${x + barW},${topY + r}V${base}Z`;
+    const bar = svg("path", { class: "bar" + (hour.state === "open" ? " open" : ""), d });
+    chart.append(bar);
+    return bar;
+  });
+  const cursor = svg("line", { class: "cursor", y1: margin.top, y2: margin.top + plotH, visibility: "hidden" });
+  chart.append(cursor);
+  box.prepend(chart);
+
+  // The pointer snaps to the nearest hour, so nobody has to aim at a 3px bar.
+  const tip = $("tip");
+  let hovered = null;
+  const hide = () => {
+    tip.style.display = "none";
+    cursor.setAttribute("visibility", "hidden");
+    hovered?.classList.remove("hover");
+  };
+  chart.onpointerleave = hide;
+  chart.onpointermove = (event) => {
+    const bounds = chart.getBoundingClientRect();
+    const px = event.clientX - bounds.left;
+    const i = Math.floor((px - margin.left) / slot);
+    if (i < 0 || i >= HOURS_SHOWN) return hide();
+    const hour = hours[i];
+    hovered?.classList.remove("hover");
+    hovered = bars[i];
+    hovered?.classList.add("hover");
+    const cx = margin.left + (i + 0.5) * slot;
+    cursor.setAttribute("x1", cx);
+    cursor.setAttribute("x2", cx);
+    cursor.setAttribute("visibility", "visible");
+    const start = epochDate(hour.epoch);
+    tip.replaceChildren(
+      el("strong", { textContent: plural(hour.fingerprints, "fingerprint") }),
+      `${hourLabel.format(start)}–${String(start.getUTCHours() + 1).padStart(2, "0")}:00 UTC`,
+      el("br"),
+      hour.fingerprints ? STATES[hour.state] || hour.state : "nothing to publish",
+    );
+    tip.style.display = "block";
+    const left = Math.min(Math.max(0, cx - tip.offsetWidth / 2), width - tip.offsetWidth);
+    tip.style.left = `${left}px`;
+    tip.style.top = `${margin.top - tip.offsetHeight - 6}px`;
+  };
+}
+
+let latest = null;
+function render() {
+  if (!latest) return;
+  renderHealth(latest);
+  renderTiles(latest);
+  renderChart(latest);
+  renderTable(latest);
+  renderMirrors(latest);
+  renderSigners(latest);
+}
+
+async function load() {
+  try {
+    const response = await fetch("status.json", { cache: "no-store" });
+    if (!response.ok) throw new Error(`status.json answered ${response.status}`);
+    latest = await response.json();
+    document.body.classList.remove("stale");
+    render();
+  } catch (error) {
+    // Keep the last numbers on screen, dimmed, and say why they stopped updating.
+    document.body.classList.add("stale");
+    $("health").className = "health";
+    $("health-label").textContent = "Can't reach the witness";
+    $("health-detail").replaceChildren(el("li", { textContent: `${error.message}; trying again every minute.` }));
+  }
+}
+
+let resizing = null;
+window.addEventListener("resize", () => {
+  cancelAnimationFrame(resizing);
+  resizing = requestAnimationFrame(() => latest && renderChart(latest));
+});
+load();
+setInterval(load, REFRESH_MS);
+</script>
+</body>
+</html>

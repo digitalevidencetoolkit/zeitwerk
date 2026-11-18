@@ -81,6 +81,8 @@ To run a witness that publishes each hour to a git remote of your own (an empty 
 
 State lives in `~/.zeitwerk` (`--data-dir` to move it): the SQLite store, the signing key, and `repo/`, the local clone the hours are committed to. Remotes are kept in that clone, so `--remote` is only needed once; `--remote name=url` again moves it. `--help` has the rest. For a witness that stays up (systemd unit, deploy keys, backups), follow [docs/witness-onboarding.md](docs/witness-onboarding.md) instead.
 
+The witness's status page is at its root, http://127.0.0.1:14788/: the fingerprints per hour over the last week, what is still waiting to be sealed, published or pushed, and each mirror. `/status.json` holds the same numbers.
+
 Submit a document's SHA-256, never the document itself; the reply is a pending receipt:
 
 ```sh

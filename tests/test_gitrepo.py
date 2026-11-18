@@ -11,7 +11,7 @@ from pathlib import Path
 
 import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
 
-from zeitwerk.gitrepo import commit, ensure_repo, push, set_remote
+from zeitwerk.gitrepo import commit, ensure_repo, push, remote_status, set_remote
 HAS_GIT = shutil.which("git") is not None
 
 
@@ -168,6 +168,53 @@ class PushTests(unittest.TestCase):
         (self.temp_dir / epoch_path(7) / "leaves.bin").write_text("test")
         commit(self.temp_dir, 7)
         self.assertEqual(push(self.temp_dir), {"mirror": None})
+
+
+@unittest.skipUnless(HAS_GIT, "git not available")
+class RemoteStatusTests(unittest.TestCase):
+    """What the status page says about each mirror."""
+
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(self.temp_dir, ignore_errors=True))
+        self.bare_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(self.bare_dir, ignore_errors=True))
+        subprocess.run(["git", "init", "--bare", str(self.bare_dir)], check=True, capture_output=True)
+        ensure_repo(self.temp_dir)
+
+    def _commit_hour(self, epoch):
+        from zeitwerk.publisher import epoch_path
+        (self.temp_dir / epoch_path(epoch)).mkdir(parents=True)
+        (self.temp_dir / epoch_path(epoch) / "leaves.bin").write_text("test")
+        commit(self.temp_dir, epoch)
+
+    def test_no_remotes_is_an_empty_list(self):
+        self.assertEqual(remote_status(self.temp_dir), [])
+
+    def test_nothing_committed_yet_is_nothing_to_push(self):
+        set_remote(self.temp_dir, "mirror", str(self.bare_dir))
+        self.assertEqual(remote_status(self.temp_dir), [("mirror", str(self.bare_dir), 0, None)])
+
+    def test_a_remote_never_pushed_to_has_every_commit_to_push(self):
+        set_remote(self.temp_dir, "mirror", "/nonexistent")
+        self._commit_hour(7)
+        self._commit_hour(8)
+        self.assertEqual(remote_status(self.temp_dir), [("mirror", "/nonexistent", 2, None)])
+
+    def test_a_pushed_remote_has_nothing_to_push_and_a_last_commit_time(self):
+        set_remote(self.temp_dir, "mirror", str(self.bare_dir))
+        self._commit_hour(7)
+        push(self.temp_dir)
+        [(_, _, unpushed, last_pushed)] = remote_status(self.temp_dir)
+        self.assertEqual(unpushed, 0)
+        self.assertIsInstance(last_pushed, int)
+
+    def test_a_commit_since_the_last_push_is_counted(self):
+        set_remote(self.temp_dir, "mirror", str(self.bare_dir))
+        self._commit_hour(7)
+        push(self.temp_dir)
+        self._commit_hour(8)
+        self.assertEqual(remote_status(self.temp_dir)[0][2], 1)
 
 
 if __name__ == "__main__":

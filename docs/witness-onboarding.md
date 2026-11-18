@@ -127,7 +127,7 @@ Nothing the witness serves is secret. We use TLS for integrity and convention, b
 - **Restarts:** All state is in `/var/lib/zeitwerk`; the service reseals and republishes any missed hours on startup.
 - **Backup**: `signer.pem` (critical, once), `/var/lib/zeitwerk` (nice to have — the published git remotes already are the public record).
 - **Updates**: `cd /opt/zeitwerk && sudo git pull --recurse-submodules && sudo make setup && sudo systemctl restart zeitwerk-witness`.
-- **Monitoring**: `curl /key` is a liveness check; a commit on the epochs repo at most an hour after a submission is the real health signal.
+- **Monitoring**: `curl /key` is a liveness check; a commit on the epochs repo at most an hour after a submission is the real health signal. The status page at `/` shows both, and `curl -s /status.json` reads `"caught_up": true` once every finished hour is sealed, published and pushed to every remote. It reads false for up to a minute after each hour, until the closer gets to it.
 - **Moving to another machine**: a witness *is* its data directory (`signer.pem`, `zeitwerk.db`, `repo/` with its remotes in `.git/config`). Stop the old one, copy the directory over (compare `sha256sum signer.pem zeitwerk.db` and `git rev-parse HEAD` at both ends), give the new box the deploy key on every remote, start it. Then make sure the old copy can never start again, e.g. by renaming it. Two live copies of one key would sign different roots for the same hour, which to a verifier looks exactly like a stolen key.
 
 ## Registering with the federation
