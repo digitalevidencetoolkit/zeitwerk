@@ -113,6 +113,14 @@ class ServerTests(unittest.TestCase):
     def test_unknown_path_is_404(self):
         self.assertEqual(self._status("GET", "/nope"), 404)
 
+    def test_the_root_is_the_status_page(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1])
+        self.addCleanup(conn.close)
+        conn.request("GET", "/")
+        resp = conn.getresponse()
+        self.assertEqual((resp.status, resp.getheader("Content-Type")), (200, "text/html; charset=utf-8"))
+        self.assertIn(b"status.json", resp.read())  # where the page gets its numbers
+
     def test_status_json_shows_this_hour_open(self):
         self._request("POST", "/digest", b"\x0d" * 32)
         status, body = self._request("GET", "/status.json")

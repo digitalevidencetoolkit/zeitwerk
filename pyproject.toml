@@ -27,3 +27,6 @@ Repository = "https://github.com/digitalevidencetoolkit/zeitwerk"
 
 [tool.setuptools]
 packages = ["zeitwerk"]
+
+[tool.setuptools.package-data]
+zeitwerk = ["status.html"]
