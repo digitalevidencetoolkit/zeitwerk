@@ -16,5 +16,5 @@ venv/
 .obsidian/
 
 # Docs kept out of git
-docs/
+docs/ignored/
 notes/
