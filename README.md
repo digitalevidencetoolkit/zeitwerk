@@ -47,21 +47,19 @@ For legal and compliance use cases, we offer paid affidavits as a sustainability
 - [x] Trust anchor ([#1](https://github.com/digitalevidencetoolkit/zeitwerk/issues/1)), hourly epoch ([#2](https://github.com/digitalevidencetoolkit/zeitwerk/issues/2)), git as publication target ([#3](https://github.com/digitalevidencetoolkit/zeitwerk/issues/3))
 - [x] Witness server with a single Ed25519 signer: `POST /digest`, `GET /timestamp/<hash>`, `GET /key` ([#17](https://github.com/digitalevidencetoolkit/zeitwerk/issues/17))
 - [x] Hourly publishing to git, `GET /recover`, third-party verification from the published folder ([#22](https://github.com/digitalevidencetoolkit/zeitwerk/issues/22), [#24](https://github.com/digitalevidencetoolkit/zeitwerk/pull/24)). Hours are published to [GitHub](https://github.com/digitalevidencetoolkit/zeitwerk-epochs) and [Codeberg](https://codeberg.org/digitalevidencetoolkit/zeitwerk-epochs) ([#23](https://github.com/digitalevidencetoolkit/zeitwerk/issues/23))
-- [ ] November: written proof format spec, CLI verifier (in review, see [VERIFICATION.md](VERIFICATION.md)), N-of-M growth, public testnet?
+- [x] Offline CLI verifier: `zeitwerk verify` and `zeitwerk recover` ([#25](https://github.com/digitalevidencetoolkit/zeitwerk/pull/25))
+- [x] A witness running around the clock, publishing every hour to both forges; [docs/witness-onboarding.md](docs/witness-onboarding.md) is how to run your own
+- [ ] November: written proof format spec, N-of-M growth, public testnet?
 
 ⚠️ Receipts are not stable yet: the attestation tags are placeholders for now, so don't rely on anything Zeitwerk issues today.
-
-**Second Stage — December 2026 to March 2027** _(proposed; funding decision expected mid-October)_
-- Bring co-signers and observers on board.
-- Governance model: paperwork and agreements, key rotations, scenario of the departure of a signer.
-- Providing of affidavits and matching more compliance targets.
-- Integration proposals in other tools and systems: [Proofmode](https://proofmode.org/), [Archive Transparency](https://archivetransparency.eu/), [Authentic Memory](https://authenticmemory.org/).
 
 
 ## Run a signer
 
 **We need you!**
 The institutions that participate in the federation are the real strength of the system. The commitment is relatively low: a signer runs a small daemon that signs the epoch roots every hour. These are only 32-byte hashes, with no user data and don't require a full server to operate.
+
+[docs/witness-onboarding.md](docs/witness-onboarding.md) is the whole setup: one Python service, one signing key, one git repository, under an hour on a 512 MB VM. [docs/publishing.md](docs/publishing.md) explains what a witness publishes and where.
 
 → If you're at a university, library, archive or digital-rights organisation and that sounds doable, [open an issue](https://github.com/digitalevidencetoolkit/zeitwerk/issues/new) or get in touch through the [project page](https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/).
 
@@ -81,7 +79,15 @@ To run a witness that publishes each hour to a git remote of your own (an empty 
 .venv/bin/python -m zeitwerk.server --remote github=git@github.com:you/zeitwerk-epochs.git
 ```
 
-State lives in `~/.zeitwerk` (`--data-dir` to move it): the SQLite store, the signing key, and `repo/`, the local clone the hours are committed to. Remotes are kept in that clone, so `--remote` is only needed once; `--remote name=url` again moves it. `--help` has the rest. Then, with only a fingerprint:
+State lives in `~/.zeitwerk` (`--data-dir` to move it): the SQLite store, the signing key, and `repo/`, the local clone the hours are committed to. Remotes are kept in that clone, so `--remote` is only needed once; `--remote name=url` again moves it. `--help` has the rest. For a witness that stays up (systemd unit, deploy keys, backups), follow [docs/witness-onboarding.md](docs/witness-onboarding.md) instead.
+
+Submit a document's SHA-256, never the document itself; the reply is a pending receipt:
+
+```sh
+openssl dgst -sha256 -binary doc.pdf | curl -s --data-binary @- http://127.0.0.1:14788/digest -o doc.ots
+```
+
+Then, once its hour is over, with only a fingerprint:
 
 ```sh
 curl -s http://127.0.0.1:14788/recover/<sha256 hex>            # the receipt, from the earliest hour holding it
@@ -105,7 +111,7 @@ zeitwerk verify doc.pdf --epochs ../zeitwerk-epochs
 
 The first argument is a file to hash or a 64-hex fingerprint. Exit code 0 means verified, 1 not verified (reason on stderr), 2 bad input.
 
-[VERIFICATION.md](VERIFICATION.md) has a worked example, the output format and the known gaps. The main one: the two `--epochs` commands take the signing key from the clone itself, so check that the `signer` line reads `6ca8feb89f12145e`.
+[docs/verification.md](docs/verification.md) has an example, the output format and the known gaps; [docs/verification.md](docs/verification.md) does the same checks by hand with the library, and lists how each one can fail. The main gap: the two `--epochs` commands take the signing key from the clone itself, so check that the `signer` line reads `6ca8feb89f12145e`.
 
 ## License
 
