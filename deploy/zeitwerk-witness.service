@@ -1,0 +1,42 @@
+# zeitwerk witness — systemd unit
+#
+# Install:  sudo cp deploy/zeitwerk-witness.service /etc/systemd/system/
+#           sudo systemctl enable --now zeitwerk-witness
+# See docs/witness-onboarding.md for the full setup.
+#
+# Assumes: code at /opt/zeitwerk (venv built with `make setup`),
+#          a `zeitwerk` system user with home /var/lib/zeitwerk,
+#          state in /var/lib/zeitwerk (db, signer.pem, repo/),
+#          git remotes already set (one-time, see the runbook).
+
+[Unit]
+Description=zeitwerk witness server
+Documentation=https://github.com/digitalevidencetoolkit/zeitwerk
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=zeitwerk
+Group=zeitwerk
+ExecStart=/opt/zeitwerk/.venv/bin/python -m zeitwerk.server \
+    --data-dir /var/lib/zeitwerk \
+    --host 127.0.0.1 \
+    --port 14788
+Restart=on-failure
+RestartSec=5
+
+# Hardening. The service needs to write only its own state directory;
+# ~/.ssh (under /var/lib/zeitwerk) is read for pushing to git remotes.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/zeitwerk
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
