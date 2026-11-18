@@ -7,7 +7,9 @@
 #
 # Run it on the witness. It fetches from origin, lists the commits it adds
 # (+) and takes away (-), checks the version out, runs `make setup` and
-# restarts the service. Going back is the same command with the old commit.
+# restarts the service. Then the witness must answer within 30 s with the
+# public key it had before; with another one, it isn't using its signing key,
+# and is stopped. Going back is the same command with the old commit.
 # A restart is safe at any time: the witness catches up on missed hours.
 #
 # The defaults follow docs/witness-onboarding.md; ZEITWERK_DIR,
@@ -27,6 +29,7 @@ main() {
     ref=${1:-main}
     dir=${ZEITWERK_DIR:-/opt/zeitwerk}
     service=${ZEITWERK_SERVICE:-zeitwerk-witness}
+    url=${ZEITWERK_URL:-http://127.0.0.1:14788}
 
     cd "$dir"
     [ -w .git ] || fail "can't write $dir: run this with sudo"
@@ -48,11 +51,39 @@ main() {
         return
     fi
 
+    key_before=$(public_key) || echo "$service isn't answering at $url: no key to compare with after the restart."
     git checkout --quiet --detach "$target"
     git submodule update --init --quiet
     make setup
     systemctl restart "$service"
-    echo "Restarted $service at $(short "$target"). To go back, run this again with $(short "$old")."
+    check_witness
+    echo "To go back, run this again with $(short "$old")."
+}
+
+# The restarted witness answers, with the key it had, and says how it's doing.
+check_witness() {
+    tries=0
+    until key=$(public_key); do
+        tries=$((tries + 1))
+        [ "$tries" -lt 30 ] || fail "$service didn't answer at $url within 30 s: see journalctl -u $service. To go back, run this again with $(short "$old")."
+        sleep 1
+    done
+    if [ -n "$key_before" ] && [ "$key" != "$key_before" ]; then
+        systemctl stop "$service"
+        fail "the public key changed, from $(printf %.8s "$key_before") to $(printf %.8s "$key"): $service isn't using its signing key, so it is stopped. Check its --data-dir."
+    fi
+    case $(curl -fsS --max-time 5 "$url/status.json" 2>/dev/null | grep -o '"caught_up": [a-z]*') in
+        *true) health="all caught up" ;;
+        *false) health="catching up, see $url/" ;;
+        *) health="no status page in this version" ;;
+    esac
+    echo "$service is answering at $(short HEAD), key $(printf %.8s "$key")…, $health."
+}
+
+# The witness's public key in hex, or a failure if it doesn't answer.
+public_key() {
+    hex=$(curl -fsS --max-time 5 "$url/key" 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    [ -n "$hex" ] && echo "$hex"
 }
 
 short() {

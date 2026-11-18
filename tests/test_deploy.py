@@ -17,8 +17,12 @@ SCRIPT = Path(__file__).resolve().parent.parent / "deploy" / "update.sh"
 HAS_TOOLS = all(shutil.which(tool) for tool in ("git", "make", "curl", "od"))
 KEY = b"\x01" * 32
 
+# A restart puts FAKE_NEXT_KEY in place, if there is one: a witness that came back with another key.
 FAKE_SYSTEMCTL = """#!/bin/sh
 echo "$*" >> "$FAKE_SYSTEMCTL_LOG"
+if [ "$1" = restart ] && [ -f "$FAKE_NEXT_KEY" ]; then
+    cp "$FAKE_NEXT_KEY" "$FAKE_KEY"
+fi
 """
 GIT = ["git", "-c", "user.name=test", "-c", "user.email=test@example.org", "-c", "commit.gpgsign=false"]
 
@@ -39,7 +43,8 @@ class UpdateScriptTests(unittest.TestCase):
         self._git(tmp, "clone", "-q", str(self.origin), str(self.box))
         self._git(self.box, "checkout", "-q", "--detach", self.first)
 
-        (witness / "key").write_bytes(KEY)
+        self.key, self.next_key, self.status = witness / "key", tmp / "next-key", witness / "status.json"
+        self.key.write_bytes(KEY)
         systemctl = bin_dir / "systemctl"
         systemctl.write_text(FAKE_SYSTEMCTL)
         systemctl.chmod(0o755)
@@ -51,6 +56,8 @@ class UpdateScriptTests(unittest.TestCase):
             "ZEITWERK_SERVICE": "witness",
             "ZEITWERK_URL": witness.as_uri(),
             "FAKE_SYSTEMCTL_LOG": str(self.systemctl_log),
+            "FAKE_KEY": str(self.key),
+            "FAKE_NEXT_KEY": str(self.next_key),
         }
 
     def _git(self, repo, *args):
@@ -117,6 +124,35 @@ class UpdateScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("no-such-branch", result.stderr)
         self.assertEqual(self._head(), self.first)
+
+
+    def test_after_the_restart_it_checks_the_key_is_the_same(self):
+        result = self._update()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("key 01010101", result.stdout)
+
+    def test_a_changed_key_stops_the_witness(self):
+        """It came back without its signing key: better stopped than signing as someone else."""
+        self.next_key.write_bytes(b"\x02" * 32)
+        result = self._update()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("key changed", result.stderr)
+        self.assertEqual(self._systemctl_calls(), ["restart witness", "stop witness"])
+
+    def test_a_witness_that_was_down_has_no_key_to_compare_but_still_updates(self):
+        self.key.unlink()
+        self.next_key.write_bytes(KEY)
+        result = self._update()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no key to compare", result.stdout)
+        self.assertIn("key 01010101", result.stdout)
+
+    def test_it_says_whether_the_witness_is_caught_up(self):
+        self.status.write_text('{"caught_up": true, "to_seal": 0}')
+        self.assertIn("all caught up", self._update().stdout)
+
+    def test_a_version_without_a_status_page_says_so(self):
+        self.assertIn("no status page", self._update().stdout)
 
 
 if __name__ == "__main__":
