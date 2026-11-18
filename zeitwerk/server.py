@@ -7,6 +7,7 @@ Same URL shape as an OpenTimestamps calendar, on the stdlib `http.server`:
     GET  /recover/<hex>     the receipt rebuilt from the published set, with
                             only the fingerprint; `?epoch=N` names the hour
     GET  /key               the signer's raw Ed25519 public key
+    GET  /status.json       what the status page shows, for monitoring too
 
 A background thread seals each hour once it is over and publishes it to the
 git repo under the data directory (start_closer).
@@ -22,6 +23,7 @@ every published hour; they are kept in the repo, so once given they stay.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import subprocess
 import threading
@@ -34,6 +36,7 @@ from urllib.parse import parse_qs
 from zeitwerk.epochtree import DIGEST_SIZE, check_digest
 from zeitwerk.gitrepo import ensure_repo, set_remote
 from zeitwerk.signer import Signer
+from zeitwerk.status import witness_status
 from zeitwerk.store import EpochClosed, EpochFull, Store
 from zeitwerk.witness import (
     EPOCH_SECONDS,
@@ -68,6 +71,8 @@ class Handler(BaseHTTPRequestHandler):
             self.get_recover(self.path[len("/recover/") :])
         elif self.path == "/key":
             self.get_key()
+        elif self.path == "/status.json":
+            self.get_status()
         else:
             self._reply(404, "Not found")
 
@@ -137,6 +142,12 @@ class Handler(BaseHTTPRequestHandler):
         """Return the signer's raw Ed25519 public key."""
         self._reply(200, self.server.signer.public_key, "application/octet-stream")
 
+    def get_status(self):
+        """What the status page shows, worked out afresh on every request."""
+        server = self.server
+        body = witness_status(server.store, server.signer, server.repo, server.now(), server.started)
+        self._reply(200, json.dumps(body), "application/json")
+
     def _reply(self, status: int, body: str | bytes, content_type: str = "text/plain") -> None:
         if isinstance(body, str):
             body = body.encode()
@@ -169,6 +180,7 @@ def make_server(
     server = ThreadingHTTPServer((host, port), Handler)
     # Hung on the server so the handlers can get at them via self.server.
     server.now = now
+    server.started = now()  # the status page's "up since"
     bound_host, bound_port = server.server_address[:2]  # port=0 gets a real one here
     server.recover_uri = recover_uri or f"http://{bound_host}:{bound_port}"
     server.store = Store(data_dir / "zeitwerk.db")

@@ -6,6 +6,7 @@ Runs with the stdlib: `python3 -m unittest discover tests`.
 import contextlib
 import http.client
 import io
+import json
 import socket
 import sqlite3
 import tempfile
@@ -111,6 +112,13 @@ class ServerTests(unittest.TestCase):
 
     def test_unknown_path_is_404(self):
         self.assertEqual(self._status("GET", "/nope"), 404)
+
+    def test_status_json_shows_this_hour_open(self):
+        self._request("POST", "/digest", b"\x0d" * 32)
+        status, body = self._request("GET", "/status.json")
+        self.assertEqual(status, 200)
+        [hour] = json.loads(body)["hours"]  # the other tests submit to epoch 7 too: no exact count
+        self.assertEqual((hour["epoch"], hour["state"]), (7, "open"))
 
 
 class ServerRecoverUriTests(unittest.TestCase):
