@@ -18,9 +18,11 @@
   --code-bg: #f2f2f2;
   --rule: #ddd;
   --pill: #f0f0f0;
-  --grid: #e4e4e4;
-  --bar: #2a78d6;
-  --bar-open: #86b6ef;
+  --cell-0: #ececec;  /* an hour nobody sent anything in */
+  --cell-1: #86b6ef;
+  --cell-2: #3987e5;
+  --cell-3: #1c5cab;
+  --cell-4: #0d366b;
   --good: #0ca30c;
   --warning: #fab219;
   --unknown: #999;
@@ -35,9 +37,12 @@
     --code-bg: #444;
     --rule: #555;
     --pill: #444;
-    --grid: #484848;
-    --bar: #6da7ec;
-    --bar-open: #2a78d6;
+    /* Lighter means more on a dark page; the faintest still clears 2:1 against it. */
+    --cell-0: #404040;
+    --cell-1: #2a78d6;
+    --cell-2: #5598e7;
+    --cell-3: #86b6ef;
+    --cell-4: #cde2fb;
   }
 }
 body {
@@ -85,13 +90,16 @@ footer { padding: 25px 0; text-align: center; font-size: .85em; color: var(--mut
 .pill { background: var(--pill); border-radius: 2em; padding: .15em .7em; font-size: .85em; white-space: nowrap; }
 
 .chart { position: relative; margin-top: .6em; }
-.chart svg { display: block; width: 100%; height: 180px; overflow: visible; }
+.chart svg { display: block; overflow: visible; }
 .chart text { fill: var(--muted); font-family: var(--font); font-size: 12px; }
-.chart .grid { stroke: var(--grid); stroke-width: 1; shape-rendering: crispEdges; }
-.chart .bar { fill: var(--bar); }
-.chart .bar.open { fill: var(--bar-open); }
-.chart .bar.hover { opacity: .7; }
-.chart .cursor { stroke: var(--muted); stroke-width: 1; shape-rendering: crispEdges; }
+/* The chart's cells take fill, the legend's keys background. */
+.l0 { fill: var(--cell-0); background: var(--cell-0); }
+.l1 { fill: var(--cell-1); background: var(--cell-1); }
+.l2 { fill: var(--cell-2); background: var(--cell-2); }
+.l3 { fill: var(--cell-3); background: var(--cell-3); }
+.l4 { fill: var(--cell-4); background: var(--cell-4); }
+.chart .cell.open { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.chart .cell.hover { stroke: var(--heading); stroke-width: 2; stroke-dasharray: none; }
 .tip {
   position: absolute; pointer-events: none; display: none; white-space: nowrap;
   background: var(--bg); border: 1px solid var(--rule); border-radius: 4px;
@@ -99,8 +107,9 @@ footer { padding: 25px 0; text-align: center; font-size: .85em; color: var(--mut
 }
 .tip strong { display: block; font-size: 1.15em; }
 .legend { font-size: .8em; color: var(--muted); margin: .4em 0 0; }
-.legend .key { display: inline-block; width: .8em; height: .8em; border-radius: 2px; background: var(--bar); margin: 0 .3em 0 0; vertical-align: -.05em; }
-.legend .key.open { background: var(--bar-open); margin-left: 1em; }
+.legend .key { display: inline-block; width: .8em; height: .8em; border-radius: 2px; margin: 0 .3em 0 0; vertical-align: -.05em; box-sizing: border-box; }
+.legend .item { white-space: nowrap; margin-right: .9em; }
+.legend .key.open { border: 1.5px dashed var(--muted); }
 details { margin-top: .8em; font-size: .9em; }
 summary { cursor: pointer; color: var(--link); }
 .scroll { overflow-x: auto; }
@@ -128,9 +137,16 @@ summary { cursor: pointer; color: var(--link); }
 
   <hr>
   <h4>Fingerprints per hour, last 7 days</h4>
-  <p class="note">Hours in UTC. An hour nobody sent anything in has nothing to publish: that is not a gap.</p>
+  <p class="note">One row per day, one square per hour, in UTC; the darker, the more fingerprints. An hour nobody sent anything in has nothing to publish: that is not a gap.</p>
   <div class="chart" id="chart"><div class="tip" id="tip"></div></div>
-  <div class="legend"><span class="key"></span>sealed<span class="key open"></span>this hour, still open</div>
+  <div class="legend">
+    <span class="item"><span class="key l0"></span>none</span>
+    <span class="item"><span class="key l1"></span>1–9</span>
+    <span class="item"><span class="key l2"></span>10–99</span>
+    <span class="item"><span class="key l3"></span>100–999</span>
+    <span class="item"><span class="key l4"></span>1,000 or more</span>
+    <span class="item"><span class="key open"></span>this hour, still open</span>
+  </div>
   <details>
     <summary>As a table</summary>
     <div class="scroll"><table>
@@ -278,94 +294,83 @@ function renderTable(data) {
   $("hours").replaceChildren(...rows);
 }
 
-// Round up to 1, 2 or 5 × 10^k, so the top gridline is a clean number.
-function niceMax(value) {
-  const power = 10 ** Math.floor(Math.log10(value));
-  return [1, 2, 5, 10].map((step) => step * power).find((step) => step >= value);
-}
+// Shades by decade, so an hour of 3 fingerprints still shows beside one of 500.
+// The legend in the HTML names these.
+const LEVELS = [1, 10, 100, 1000];
+const level = (count) => LEVELS.filter((low) => count >= low).length;
 
+// One row per UTC day, one square per hour, like a contribution graph: the
+// oldest row starts where the 7 days do, today's stops at this hour.
 function renderChart(data) {
   const box = $("chart");
   box.querySelector("svg")?.remove();
-  const width = box.clientWidth, height = 180;
-  const margin = { top: 8, right: 0, bottom: 22, left: 40 };
-  const plotW = width - margin.left - margin.right, plotH = height - margin.top - margin.bottom;
-  const first = data.epoch - HOURS_SHOWN + 1;
-  const hours = Array.from({ length: HOURS_SHOWN }, (_, i) => ({ epoch: first + i, fingerprints: 0, state: null }));
-  for (const hour of data.hours) hours[hour.epoch - first] = hour;
+  const last = data.epoch, first = last - HOURS_SHOWN + 1;
+  const firstDay = Math.floor(first / 24), days = Math.floor(last / 24) - firstDay + 1;
+  const width = box.clientWidth;
+  const margin = { top: 18, left: 52 };
+  const slot = Math.min(20, (width - margin.left) / 24);  // squares stop growing on a wide page
+  const size = slot - (slot >= 16 ? 3 : 2);
+  const height = margin.top + days * slot;
+  const chart = svg("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "img",
+    "aria-label": "Fingerprints per hour over the last 7 days, one row per day; the table below has the numbers." });
 
-  const top = niceMax(Math.max(1, ...hours.map((h) => h.fingerprints)));
-  const y = (value) => margin.top + plotH - (value / top) * plotH;
-  const slot = plotW / HOURS_SHOWN;
-  const gap = slot >= 6 ? 2 : 1;
-  const barW = Math.max(1, slot - gap);
-  const chart = svg("svg", { viewBox: `0 0 ${width} ${height}`, role: "img",
-    "aria-label": "Fingerprints per hour over the last 7 days; the table below has the numbers." });
-
-  const ticks = top % 2 === 0 ? [0, top / 2, top] : [0, top];
-  for (const tick of ticks) {
-    chart.append(svg("line", { class: "grid", x1: margin.left, x2: width, y1: y(tick), y2: y(tick) }));
-    const label = svg("text", { x: margin.left - 6, y: y(tick) + 4, "text-anchor": "end" });
-    label.textContent = number(tick);
+  for (let hour = 0; hour < 24; hour += slot >= 16 ? 3 : 6) {
+    const label = svg("text", { x: margin.left + hour * slot, y: margin.top - 6 });
+    label.textContent = String(hour).padStart(2, "0");
     chart.append(label);
   }
-  hours.forEach((hour, i) => {
-    // A label at each midnight, every other one on a phone, none that would run off the end.
-    const x = margin.left + i * slot, labelW = 48;
-    const narrow = 24 * slot < labelW + 12;
-    if (hour.epoch % 24 !== 0 || (narrow && (hour.epoch / 24) % 2) || x + labelW > width) return;
-    const label = svg("text", { x, y: height - 4 });
-    label.textContent = dayLabel.format(epochDate(hour.epoch));
+  const known = new Map(data.hours.map((hour) => [hour.epoch, hour]));
+  const cells = new Map();  // epoch -> the hour and its square
+  for (let row = 0; row < days; row++) {
+    const day = firstDay + row, y = margin.top + row * slot;
+    const label = svg("text", { x: margin.left - 8, y: y + size / 2 + 4, "text-anchor": "end" });
+    label.textContent = dayLabel.format(epochDate(day * 24));
     chart.append(label);
-  });
-
-  const bars = hours.map((hour, i) => {
-    if (!hour.fingerprints) return null;
-    const x = margin.left + i * slot + gap / 2, h = margin.top + plotH - y(hour.fingerprints);
-    const r = Math.min(4, barW / 2, h), base = margin.top + plotH, topY = base - h;
-    // Rounded at the data end, square on the baseline.
-    const d = `M${x},${base}V${topY + r}Q${x},${topY} ${x + r},${topY}H${x + barW - r}Q${x + barW},${topY} ${x + barW},${topY + r}V${base}Z`;
-    const bar = svg("path", { class: "bar" + (hour.state === "open" ? " open" : ""), d });
-    chart.append(bar);
-    return bar;
-  });
-  const cursor = svg("line", { class: "cursor", y1: margin.top, y2: margin.top + plotH, visibility: "hidden" });
-  chart.append(cursor);
+    for (let col = 0; col < 24; col++) {
+      const epoch = day * 24 + col;
+      if (epoch < first || epoch > last) continue;
+      const hour = known.get(epoch) || { epoch, fingerprints: 0, state: null };
+      const square = svg("rect", {
+        class: `cell l${level(hour.fingerprints)}` + (epoch === last ? " open" : ""),
+        x: margin.left + col * slot, y, width: size, height: size, rx: Math.min(3, size / 4),
+      });
+      chart.append(square);
+      cells.set(epoch, { hour, square });
+    }
+  }
   box.prepend(chart);
 
-  // The pointer snaps to the nearest hour, so nobody has to aim at a 3px bar.
+  // The pointer snaps to the square it is over, gaps included.
   const tip = $("tip");
   let hovered = null;
   const hide = () => {
     tip.style.display = "none";
-    cursor.setAttribute("visibility", "hidden");
-    hovered?.classList.remove("hover");
+    hovered?.square.classList.remove("hover");
+    hovered = null;
   };
   chart.onpointerleave = hide;
   chart.onpointermove = (event) => {
     const bounds = chart.getBoundingClientRect();
-    const px = event.clientX - bounds.left;
-    const i = Math.floor((px - margin.left) / slot);
-    if (i < 0 || i >= HOURS_SHOWN) return hide();
-    const hour = hours[i];
-    hovered?.classList.remove("hover");
-    hovered = bars[i];
-    hovered?.classList.add("hover");
-    const cx = margin.left + (i + 0.5) * slot;
-    cursor.setAttribute("x1", cx);
-    cursor.setAttribute("x2", cx);
-    cursor.setAttribute("visibility", "visible");
+    const col = Math.floor((event.clientX - bounds.left - margin.left) / slot);
+    const row = Math.floor((event.clientY - bounds.top - margin.top) / slot);
+    const found = col >= 0 && col < 24 && row >= 0 ? cells.get((firstDay + row) * 24 + col) : undefined;
+    if (!found) return hide();
+    hovered?.square.classList.remove("hover");
+    hovered = found;
+    found.square.classList.add("hover");
+    const { hour } = found;
     const start = epochDate(hour.epoch);
     tip.replaceChildren(
       el("strong", { textContent: plural(hour.fingerprints, "fingerprint") }),
       `${hourLabel.format(start)}–${String(start.getUTCHours() + 1).padStart(2, "0")}:00 UTC`,
       el("br"),
-      hour.fingerprints ? STATES[hour.state] || hour.state : "nothing to publish",
+      hour.epoch === last ? STATES.open : hour.fingerprints ? STATES[hour.state] || hour.state : "nothing to publish",
     );
     tip.style.display = "block";
+    const cx = margin.left + col * slot + size / 2;
     const left = Math.min(Math.max(0, cx - tip.offsetWidth / 2), width - tip.offsetWidth);
     tip.style.left = `${left}px`;
-    tip.style.top = `${margin.top - tip.offsetHeight - 6}px`;
+    tip.style.top = `${margin.top + row * slot - tip.offsetHeight - 6}px`;
   };
 }
 
