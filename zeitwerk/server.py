@@ -35,7 +35,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from zeitwerk.epochtree import DIGEST_SIZE, check_digest
+from zeitwerk.epochtree import DIGEST_SIZE, MAX_LEAVES, check_digest
 from zeitwerk.gitrepo import ensure_repo, set_remote
 from zeitwerk.signer import Signer
 from zeitwerk.status import witness_status
@@ -172,6 +172,7 @@ def make_server(
     port: int = DEFAULT_PORT,
     now=time.time,
     recover_uri: str | None = None,
+    max_leaves: int = MAX_LEAVES,
 ) -> ThreadingHTTPServer:
     """`data_dir` holds the database and the signing key; reuse it to restart.
 
@@ -179,6 +180,9 @@ def make_server(
     `recover_uri` goes into every pending receipt: where its holder comes
     back to. Left out, it is the address the server is bound to, which only
     suits a local run; a public server names its own.
+    `max_leaves` is how many fingerprints an hour takes before it answers
+    503. Everything an hour takes is pushed to public git for good, so a
+    public server caps it far below what the tree allows.
     """
     data_dir = Path(data_dir)
     data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)  # the private key lives here
@@ -188,7 +192,7 @@ def make_server(
     server.started = now()  # the status page's "up since"
     bound_host, bound_port = server.server_address[:2]  # port=0 gets a real one here
     server.recover_uri = recover_uri or f"http://{bound_host}:{bound_port}"
-    server.store = Store(data_dir / "zeitwerk.db")
+    server.store = Store(data_dir / "zeitwerk.db", max_leaves=max_leaves)
     server.signer = Signer(data_dir / "signer.pem")
     server.repo = data_dir / "repo"
     try:
@@ -235,6 +239,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="default: %(default)s")
     parser.add_argument("--recover-uri", help="what pending receipts point back to (default: the bound address)")
     parser.add_argument(
+        "--max-leaves",
+        type=int,
+        default=MAX_LEAVES,
+        help="fingerprints an hour takes before answering 503 (default: %(default)s, the tree's limit)",
+    )
+    parser.add_argument(
         "--remote",
         action="append",
         default=[],
@@ -248,7 +258,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    server = make_server(args.data_dir, args.host, args.port, recover_uri=args.recover_uri)
+    server = make_server(args.data_dir, args.host, args.port, recover_uri=args.recover_uri, max_leaves=args.max_leaves)
     for name, url in args.remote:
         try:
             set_remote(server.repo, name, url)

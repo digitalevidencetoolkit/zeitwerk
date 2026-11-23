@@ -18,6 +18,7 @@ import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
 from opentimestamps.core.serialize import BytesDeserializationContext
 from opentimestamps.core.timestamp import Timestamp
 from zeitwerk import ZeitwerkPendingAttestation, deserialize_attestation, serialize_attestation
+from zeitwerk.epochtree import MAX_LEAVES
 from zeitwerk.server import Handler, make_server, parse_args, start_closer
 from zeitwerk.store import Store
 from zeitwerk.witness import EPOCH_SECONDS, close_due, publish_due, verify_signed_receipt
@@ -318,6 +319,10 @@ class ArgsTests(unittest.TestCase):
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             parse_args(["--remote", "git@github.com:o/r.git"])
 
+    def test_max_leaves_is_the_trees_limit_unless_given(self):
+        self.assertEqual(parse_args([]).max_leaves, MAX_LEAVES)
+        self.assertEqual(parse_args(["--max-leaves", "5000"]).max_leaves, 5000)
+
 
 class CloserTests(unittest.TestCase):
     """The background thread that seals each finished hour."""
@@ -399,6 +404,24 @@ class ServerRefusalTests(unittest.TestCase):
             request(self.server, "POST", "/digest", b"\x07" * 32),
             (503, b"Epoch full, try again next hour"),
         )
+
+
+class ServerMaxLeavesTests(unittest.TestCase):
+    """A public witness caps each hour, bounding what anyone can push to its repo."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.server = start(tmp.name, max_leaves=2)
+        self.addCleanup(stop, self.server)
+        for digest in (b"\x08" * 32, b"\x09" * 32):
+            request(self.server, "POST", "/digest", digest)
+
+    def test_a_fingerprint_past_the_cap_is_503(self):
+        self.assertEqual(request(self.server, "POST", "/digest", b"\x0a" * 32)[0], 503)
+
+    def test_a_fingerprint_already_in_a_full_hour_still_gets_its_receipt(self):
+        self.assertEqual(request(self.server, "POST", "/digest", b"\x08" * 32)[0], 200)
 
 
 if __name__ == "__main__":
