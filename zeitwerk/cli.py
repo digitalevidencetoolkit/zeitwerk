@@ -1,10 +1,11 @@
 """Command-line interface for zeitwerk verification.
 
 This module provides a CLI wrapper around the zeitwerk verification functions.
-It supports three modes:
+It supports four modes:
 1. verify --receipt --key: Check a receipt against a witness public key
 2. recover: Rebuild a receipt from the public epoch repository
 3. verify --epochs: Verify directly against the public record (operator offline)
+4. dns-record: Print the DNS TXT record that publishes a witness public key
 """
 
 from __future__ import annotations
@@ -235,6 +236,25 @@ def cmd_verify_epochs(args: argparse.Namespace) -> int:
         return 2
 
 
+def cmd_dns_record(args: argparse.Namespace) -> int:
+    """Print the TXT value to publish at _zeitwerk.<domain> for a witness key.
+
+    Returns exit code: 0=success, 2=bad input
+    """
+    from zeitwerk.dnsrecord import format_record
+
+    key_path = Path(args.key)
+    if not key_path.exists():
+        print(f"Error: Key file not found: {args.key}", file=sys.stderr)
+        return 2
+    try:
+        print(format_record(key_path.read_bytes()))
+    except ValueError as e:
+        print(f"Error: {args.key}: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main entry point for the zeitwerk CLI.
 
@@ -288,6 +308,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to the published epochs repository"
     )
 
+    # dns-record command
+    dns_record_parser = subparsers.add_parser(
+        "dns-record", help="Print the DNS TXT record that publishes a witness key"
+    )
+    dns_record_parser.add_argument(
+        "key",
+        help="Raw 32-byte public key, e.g. signers/<key_id>.pub"
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -305,6 +334,9 @@ def main(argv: list[str] | None = None) -> int:
     
     elif args.command == "recover":
         return cmd_recover(args)
+
+    elif args.command == "dns-record":
+        return cmd_dns_record(args)
 
     else:
         print(f"Error: Unknown command: {args.command}", file=sys.stderr)
