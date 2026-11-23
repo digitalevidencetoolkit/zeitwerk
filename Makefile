@@ -23,7 +23,7 @@ $(STAMP): pyproject.toml
 	@echo "Setting up $(VENV) ..."
 	git submodule update --init
 	python3 -m venv $(VENV)
-	$(VENV)/bin/pip install -q -e submodules/python-opentimestamps -e .
+	$(VENV)/bin/pip install -q -e submodules/python-opentimestamps -e '.[dns]'
 	touch $(STAMP)
 
 test: setup

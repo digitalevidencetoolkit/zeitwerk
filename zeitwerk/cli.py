@@ -1,10 +1,12 @@
 """Command-line interface for zeitwerk verification.
 
 This module provides a CLI wrapper around the zeitwerk verification functions.
-It supports three modes:
+It supports four modes:
 1. verify --receipt --key: Check a receipt against a witness public key
 2. recover: Rebuild a receipt from the public epoch repository
-3. verify --epochs: Verify directly against the public record (operator offline)
+3. verify --epochs: Verify directly against the public record (operator offline),
+   and with --dns, check the signer's key is the one a domain publishes
+4. dns-record: Print the DNS TXT record that publishes a witness public key
 """
 
 from __future__ import annotations
@@ -13,6 +15,10 @@ import argparse
 import hashlib
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from zeitwerk.dnsrecord import Resolve
 
 
 def parse_fingerprint(arg: str) -> bytes:
@@ -152,13 +158,40 @@ def cmd_verify_receipt(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_verify_epochs(args: argparse.Namespace) -> int:
+def check_dns(domain: str, key: bytes, key_id: bytes, resolve: Resolve) -> int:
+    """Check the domain publishes this signer's key, and print what was found.
+
+    Compares the whole key, not the 8-byte key id: a key made to share the id
+    must not pass.
+
+    Returns exit code: 0=published, 1=not published, 3=lookup failed
+    """
+    from zeitwerk.dnsrecord import DnsLookupError, published_keys, record_name
+
+    try:
+        keys, authenticated = published_keys(domain, resolve)
+    except DnsLookupError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 3
+    if key not in keys:
+        print(f"NOT VERIFIED signer {key_id.hex()} not in DNS for {domain} "
+              f"({len(keys)} keys at {record_name(domain)})", file=sys.stderr)
+        return 1
+    if authenticated:
+        print(f"dns          confirmed for {domain} (DNSSEC)")
+    else:
+        print(f"dns          confirmed for {domain} (no DNSSEC: the answer was not validated)")
+    return 0
+
+
+def cmd_verify_epochs(args: argparse.Namespace, resolve: Resolve) -> int:
     """Verify a document against the public epoch repository.
 
     This is the "I trust nobody" mode: verify directly from the published
-    record with the operator offline.
+    record with the operator offline. With --dns, the one lookup is the
+    signer's key, at a domain the verifier names.
 
-    Returns exit code: 0=verified, 1=not verified, 2=bad input
+    Returns exit code: 0=verified, 1=not verified, 2=bad input, 3=DNS lookup failed
     """
     from zeitwerk.publisher import verify_published
     from zeitwerk.epochtree import verify_non_inclusion, decode_leaf_set, build_epoch_tree
@@ -201,6 +234,12 @@ def cmd_verify_epochs(args: argparse.Namespace) -> int:
         if isinstance(att, ZeitwerkAttestation) and att.anchor_type == AnchorType.WITNESS_ED25519:
             key_id = att.anchor_ref[:KEY_ID_SIZE]
             print(f"signer       {key_id.hex()}")
+            if args.dns:
+                # The key verify_published checked the signature with.
+                key = (repo / "signers" / f"{key_id.hex()}.pub").read_bytes()
+                code = check_dns(args.dns, key, key_id, resolve)
+                if code != 0:
+                    return code
 
         print("VERIFIED     signature valid over (hour, root)")
         return 0
@@ -235,10 +274,31 @@ def cmd_verify_epochs(args: argparse.Namespace) -> int:
         return 2
 
 
-def main(argv: list[str] | None = None) -> int:
+def cmd_dns_record(args: argparse.Namespace) -> int:
+    """Print the TXT value to publish at _zeitwerk.<domain> for a witness key.
+
+    Returns exit code: 0=success, 2=bad input
+    """
+    from zeitwerk.dnsrecord import format_record
+
+    key_path = Path(args.key)
+    if not key_path.exists():
+        print(f"Error: Key file not found: {args.key}", file=sys.stderr)
+        return 2
+    try:
+        print(format_record(key_path.read_bytes()))
+    except ValueError as e:
+        print(f"Error: {args.key}: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def main(argv: list[str] | None = None, resolve: Resolve | None = None) -> int:
     """Main entry point for the zeitwerk CLI.
 
-    Returns exit code: 0=success, 1=verification failed, 2=bad input
+    resolve looks up DNS records for --dns; tests pass a fake one.
+
+    Returns exit code: 0=success, 1=verification failed, 2=bad input, 3=DNS lookup failed
     """
     parser = argparse.ArgumentParser(
         prog="zeitwerk",
@@ -274,6 +334,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar="FILE",
         help="Path to the witness public key file"
     )
+    verify_parser.add_argument(
+        "--dns",
+        metavar="DOMAIN",
+        help="With --epochs: check the signer's key is published at _zeitwerk.DOMAIN"
+    )
 
     # recover command
     recover_parser = subparsers.add_parser("recover", help="Recover a receipt from the public record")
@@ -288,6 +353,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to the published epochs repository"
     )
 
+    # dns-record command
+    dns_record_parser = subparsers.add_parser(
+        "dns-record", help="Print the DNS TXT record that publishes a witness key"
+    )
+    dns_record_parser.add_argument(
+        "key",
+        help="Raw 32-byte public key, e.g. signers/<key_id>.pub"
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -295,8 +369,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.command == "verify":
+        if args.dns and not args.epochs:
+            print("Error: --dns works with --epochs only", file=sys.stderr)
+            return 2
         if args.epochs:
-            return cmd_verify_epochs(args)
+            from zeitwerk.dnsrecord import resolve_txt
+            return cmd_verify_epochs(args, resolve or resolve_txt)
         elif args.receipt and args.key:
             return cmd_verify_receipt(args)
         else:
@@ -305,6 +383,9 @@ def main(argv: list[str] | None = None) -> int:
     
     elif args.command == "recover":
         return cmd_recover(args)
+
+    elif args.command == "dns-record":
+        return cmd_dns_record(args)
 
     else:
         print(f"Error: Unknown command: {args.command}", file=sys.stderr)
