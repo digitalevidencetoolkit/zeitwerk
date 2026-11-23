@@ -1,0 +1,47 @@
+{
+  "witnesses": [
+    {
+      "key_id": "6ca8feb89f12145e",
+      "operator": "Digital Evidence Toolkit",
+      "records": [
+        "https://github.com/digitalevidencetoolkit/zeitwerk-epochs",
+        "https://codeberg.org/digitalevidencetoolkit/zeitwerk-epochs"
+      ],
+      "status": "https://witness.digitalevidencetoolkit.org/",
+      "dns": "digitalevidencetoolkit.org"
+    },
+    {
+      "key_id": "8655e87c893beb9d",
+      "operator": "Olaia.eu",
+      "records": [
+        "https://github.com/OlaiaEU/olaia-zeitwerk-epochs"
+      ],
+      "status": "https://witness.olaia.eu/",
+      "dns": "witness.olaia.eu"
+    }
+  ],
+  "mirrors": [
+    {
+      "operator": "Guardian Project",
+      "of": "6ca8feb89f12145e",
+      "url": "https://guardianproject.dev/nathan/zeitwerk-epochs",
+      "kind": "Forgejo pull mirror",
+      "from": "https://codeberg.org/digitalevidencetoolkit/zeitwerk-epochs"
+    },
+    {
+      "operator": "Authentic Memory",
+      "of": "6ca8feb89f12145e",
+      "url": "https://zeitwerk.authenticmemory.org/",
+      "kind": "Hourly Git mirror",
+      "from": "https://codeberg.org/digitalevidencetoolkit/zeitwerk-epochs"
+    },
+    {
+      "operator": "Digital Evidence Toolkit",
+      "of": "8655e87c893beb9d",
+      "url": "https://github.com/digitalevidencetoolkit/olaia-zeitwerk-epochs",
+      "kind": "Append-only hourly mirror",
+      "from": "https://github.com/OlaiaEU/olaia-zeitwerk-epochs"
+    }
+  ],
+  "joining": []
+}
