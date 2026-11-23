@@ -118,7 +118,21 @@ witness.example.org {
 }
 ```
 
-Once it is reachable, tell the witness its own address with `--recover-uri https://witness.example.org` in the unit's `ExecStart`. Every pending receipt includes that URI as the place to come back to for the upgrade.
+Before anyone else can submit, cap each hour with `--max-leaves`. Everything an hour takes is pushed to your public repositories for good, and the tree allows a million fingerprints an hour: about 100 MB of history, in one hour, from one script. `--max-leaves 5000` keeps a full hour under half a megabyte; once it is full, the witness answers 503 until the next hour. Pick a number above the biggest batch you expect.
+
+Once it is reachable, tell the witness its own address with `--recover-uri https://witness.example.org`. Every pending receipt includes that URI as the place to come back to for the upgrade.
+
+Set both in an override rather than in the unit file, so they are yours whatever the template becomes. `sudo systemctl edit zeitwerk-witness` opens it; empty `ExecStart` first, then the whole command:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/opt/zeitwerk/.venv/bin/python -m zeitwerk.server \
+    --data-dir /var/lib/zeitwerk --host 127.0.0.1 --port 14788 \
+    --max-leaves 5000 --recover-uri https://witness.example.org
+```
+
+Then `sudo systemctl restart zeitwerk-witness`, and `systemctl cat zeitwerk-witness` shows the override after the unit.
 
 Nothing the witness serves is secret. We use TLS for integrity and convention, but it does not deliver confidentiality.
 
@@ -232,3 +246,15 @@ aws ec2 authorize-security-group-ingress --group-id $SG \
 ```
 
 Continue with [Setup](#setup) over `ssh admin@zeitwerk-witness`.
+
+### A4. Open it to the public, for a while
+
+Tailscale Funnel serves the witness at `https://<machine>.<tailnet>.ts.net` without opening an inbound port: the box still only dials out. Turn on HTTPS certificates and Funnel for the machine in the admin console first, set `--max-leaves` and `--recover-uri https://<machine>.<tailnet>.ts.net` (see [TLS and exposure](#tls-and-exposure)), then:
+
+```sh
+sudo tailscale funnel --bg 14788    # public from now on
+tailscale funnel status
+sudo tailscale funnel reset         # private again
+```
+
+The ts.net address ends up in every pending receipt issued meanwhile and stops answering once Funnel is off. Those receipts still upgrade: each names its hour, so `zeitwerk verify` rebuilds it from the published repository. For a permanent endpoint, use your own domain and a reverse proxy instead.
