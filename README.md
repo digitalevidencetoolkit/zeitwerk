@@ -51,6 +51,8 @@ For legal and compliance use cases, we offer paid affidavits as a sustainability
 - [x] A witness running around the clock, publishing every hour to both forges; [docs/witness-onboarding.md](docs/witness-onboarding.md) is how to run your own
 - [x] Signing keys in DNS: `zeitwerk dns-record` prints a witness's TXT record, `zeitwerk verify --dns` checks the signer against it ([#34](https://github.com/digitalevidencetoolkit/zeitwerk/pull/34), [#35](https://github.com/digitalevidencetoolkit/zeitwerk/pull/35))
 - [x] A public witness at [witness.digitalevidencetoolkit.org](https://witness.digitalevidencetoolkit.org), capped per hour ([#37](https://github.com/digitalevidencetoolkit/zeitwerk/pull/37))
+- [x] A second witness, run independently by Olaia.eu at [witness.olaia.eu](https://witness.olaia.eu) since 20 November; [federation.json](federation.json) lists the witnesses
+- [x] Two mirrors of our record, kept by the [Guardian Project](https://guardianproject.dev/nathan/zeitwerk-epochs) and [Authentic Memory](https://zeitwerk.authenticmemory.org); [zeitwerk.digitalevidencetoolkit.org](https://zeitwerk.digitalevidencetoolkit.org) shows every witness and mirror. We keep an append-only copy of Olaia.eu's record at [digitalevidencetoolkit/olaia-zeitwerk-epochs](https://github.com/digitalevidencetoolkit/olaia-zeitwerk-epochs), pushed hourly by [deploy/mirror.sh](deploy/mirror.sh)
 - [ ] November: written proof format spec, N-of-M growth
 
 ⚠️ Receipts are not stable yet: the attestation tags are placeholders for now, so don't rely on anything Zeitwerk issues today.
@@ -64,14 +66,14 @@ Ours runs at https://witness.digitalevidencetoolkit.org, with its status page at
 openssl dgst -sha256 -binary doc.pdf | curl -s --data-binary @- https://witness.digitalevidencetoolkit.org/digest -o doc.ots
 ```
 
-Anything sent there is published for good to public git, so send fingerprints only. Each hour takes up to 5,000; past that the witness answers 503 until the next hour. Its signing key is `6ca8feb89f12145e`, published in our DNS zone at `_zeitwerk.digitalevidencetoolkit.org`. To verify, see [Verify a document](#verify-a-document); the endpoints under Quickstart work against it too.
+Anything sent there is published for good to public git, so send fingerprints only. Each hour takes up to 5,000; past that the witness answers 503 until the next hour. Its signing key is `6ca8feb89f12145e`, published in our DNS zone at `_zeitwerk.digitalevidencetoolkit.org`. To verify, see [Verify a document](#verify-a-document); the endpoints under Quickstart work against it too. Every witness, each read from its own public record, is listed at https://zeitwerk.digitalevidencetoolkit.org.
 
 ## Run a signer
 
 **We need you!**
 The institutions that participate in the federation are the real strength of the system. The commitment is relatively low: a signer runs a small daemon that signs the epoch roots every hour. These are only 32-byte hashes, with no user data and don't require a full server to operate.
 
-[docs/witness-onboarding.md](docs/witness-onboarding.md) is the whole setup: one Python service, one signing key, one git repository, under an hour on a 512 MB VM.
+[docs/witness-onboarding.md](docs/witness-onboarding.md) is the whole setup: one Python service, one signing key, one git repository, under an hour on a 512 MB VM. Once yours runs, adding it to [federation.json](federation.json) is one pull request.
 
 → If you're at a university, library, archive or digital-rights organisation and that sounds doable, [open an issue](https://github.com/digitalevidencetoolkit/zeitwerk/issues/new) or get in touch through the [project page](https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/).
 

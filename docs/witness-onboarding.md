@@ -165,7 +165,7 @@ Email <hi@digitalevidencetoolkit.org> with:
 3. Your public endpoint (if you expose one) and an operational contact.
 4. The domain that publishes your key (see above).
 
-We add your key and repo to the federation list; verifiers then count your signature toward the N-of-M threshold. The governance detail (key rotation, signer exit) is in the federation design note.
+We add your witness to [`federation.json`](../federation.json): key id, operator, records, status page, and the domain that publishes your key. Adding a witness is one pull request, so you can also open it yourself. Nothing counts signatures toward an N-of-M threshold yet: each witness's hours verify on their own, and checking that witnesses agree is the next piece. Key rotation and signer exit have no written rules yet (#36).
 
 ## Appendix: a box on AWS, reachable over Tailscale
 
