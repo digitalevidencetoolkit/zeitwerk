@@ -122,6 +122,10 @@ class ServerTests(unittest.TestCase):
         self.assertEqual((resp.status, resp.getheader("Content-Type")), (200, "text/html; charset=utf-8"))
         self.assertIn(b"status.json", resp.read())  # where the page gets its numbers
 
+    def test_the_status_page_warns_that_what_is_sent_is_public_for_good(self):
+        _, page = self._request("GET", "/")
+        self.assertIn(b"public for good", page)
+
     def test_status_json_shows_this_hour_open(self):
         self._request("POST", "/digest", b"\x0d" * 32)
         status, body = self._request("GET", "/status.json")
