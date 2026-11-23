@@ -100,6 +100,7 @@ summary { cursor: pointer; color: var(--link); }
     <a href="https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/">About</a>
     <a href="https://github.com/digitalevidencetoolkit/zeitwerk">Code</a>
     <a href="status.json">Data</a>
+    <a href="https://zeitwerk.digitalevidencetoolkit.org/">All witnesses</a>
   </nav>
 </header>
 
@@ -258,7 +259,7 @@ function renderSigners(data) {
     el("a", { href: "key", textContent: "public key" }),
     el("br"),
     el("span", { className: "note", textContent:
-      "v0 runs a single signer, which could forge an hour on its own. The federation adds independent institutions: forging then takes several of them colluding." }),
+      "Each hour here is signed by this witness alone. Other witnesses sign their own hours, so a fingerprint sent to several is attested by each. Checking that they agree is the next piece." }),
   );
 }
 
