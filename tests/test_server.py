@@ -19,7 +19,7 @@ from opentimestamps.core.serialize import BytesDeserializationContext
 from opentimestamps.core.timestamp import Timestamp
 from zeitwerk import ZeitwerkPendingAttestation, deserialize_attestation, serialize_attestation
 from zeitwerk.epochtree import MAX_LEAVES
-from zeitwerk.server import Handler, make_server, parse_args, start_closer
+from zeitwerk.server import STATUS_TTL, Handler, make_server, parse_args, start_closer
 from zeitwerk.store import Store
 from zeitwerk.witness import EPOCH_SECONDS, close_due, publish_due, verify_signed_receipt
 
@@ -128,6 +128,34 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         [hour] = json.loads(body)["hours"]  # the other tests submit to epoch 7 too: no exact count
         self.assertEqual((hour["epoch"], hour["state"]), (7, "open"))
+
+
+class ServerStatusCacheTests(unittest.TestCase):
+    """Working out status.json runs git, so the open status pages share one answer."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.now = FAKE_NOW
+        self.server = start(tmp.name, now=lambda: self.now)
+        self.addCleanup(stop, self.server)
+        self.first = request(self.server, "GET", "/status.json")[1]
+        request(self.server, "POST", "/digest", b"\x0e" * 32)
+
+    def fingerprints(self):
+        return json.loads(request(self.server, "GET", "/status.json")[1])["fingerprints"]
+
+    def test_an_answer_stands_for_status_ttl_seconds(self):
+        self.now += STATUS_TTL - 1
+        self.assertEqual(request(self.server, "GET", "/status.json")[1], self.first)
+
+    def test_then_it_is_worked_out_afresh(self):
+        self.now += STATUS_TTL
+        self.assertEqual(self.fingerprints(), 1)
+
+    def test_a_clock_set_back_works_it_out_afresh(self):
+        self.now -= 1
+        self.assertEqual(self.fingerprints(), 1)
 
 
 class ServerRecoverUriTests(unittest.TestCase):

@@ -53,6 +53,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 14788
 DEFAULT_DATA_DIR = Path.home() / ".zeitwerk"
 READ_TIMEOUT = 10.0  # seconds a client gets to send its request, then we hang up
+STATUS_TTL = 30.0  # seconds one status.json answer stands; working one out runs several git processes
 STATUS_PAGE = resources.files("zeitwerk").joinpath("status.html").read_bytes()
 
 
@@ -148,10 +149,20 @@ class Handler(BaseHTTPRequestHandler):
         self._reply(200, self.server.signer.public_key, "application/octet-stream")
 
     def get_status(self):
-        """What the status page shows, worked out afresh on every request."""
+        """What the status page shows, worked out afresh every STATUS_TTL seconds at most.
+
+        Every open status page asks once a minute, and each answer runs git
+        once per mirror and more: on a small box, many pages at once would
+        be the easy way to knock the witness over. They share one answer.
+        """
         server = self.server
-        body = witness_status(server.store, server.signer, server.repo, server.now(), server.started)
-        self._reply(200, json.dumps(body), "application/json")
+        with server.status_lock:  # one round of git at a time, however many ask
+            now = server.now()
+            if not 0 <= now - server.status_at < STATUS_TTL:  # stale, or the clock was set back
+                status = witness_status(server.store, server.signer, server.repo, now, server.started)
+                server.status_json, server.status_at = json.dumps(status), now
+            body = server.status_json
+        self._reply(200, body, "application/json")
 
     def _reply(self, status: int, body: str | bytes, content_type: str = "text/plain") -> None:
         if isinstance(body, str):
@@ -192,6 +203,8 @@ def make_server(
     server.started = now()  # the status page's "up since"
     bound_host, bound_port = server.server_address[:2]  # port=0 gets a real one here
     server.recover_uri = recover_uri or f"http://{bound_host}:{bound_port}"
+    server.status_lock = threading.Lock()
+    server.status_json, server.status_at = "", float("-inf")  # the last status.json, and when
     server.store = Store(data_dir / "zeitwerk.db", max_leaves=max_leaves)
     server.signer = Signer(data_dir / "signer.pem")
     server.repo = data_dir / "repo"
