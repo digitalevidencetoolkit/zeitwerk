@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from zeitwerk.cli import main
-from zeitwerk.dnsrecord import format_record, parse_record
+from zeitwerk.dnsrecord import format_record, parse_record, published_keys
 
 # The record live at _zeitwerk.digitalevidencetoolkit.org, and the key in it.
 LIVE_RECORD = "v=zw0; k=ed25519; p=2mEQqOkv4bAqVifS83aHDZ/tp1hRPZVtPo/NRBOrtig="
@@ -72,6 +72,40 @@ class ParseRecordTests(unittest.TestCase):
         """Two p= in one record: refuse, rather than pick one."""
         with self.assertRaisesRegex(ValueError, "twice"):
             parse_record(LIVE_RECORD + "; p=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=")
+
+
+def fake_dns(records: dict[str, list[str]], authenticated: bool = True):
+    """A resolver answering from {name: [TXT values]}, never the network."""
+    def resolve(name):
+        return records.get(name, []), authenticated
+    return resolve
+
+
+class PublishedKeysTests(unittest.TestCase):
+    def test_reads_the_key_at_the_zeitwerk_label(self):
+        resolve = fake_dns({"_zeitwerk.example.org": [LIVE_RECORD]})
+        self.assertEqual(published_keys("example.org", resolve), ([LIVE_KEY], True))
+
+    def test_reads_every_key_at_the_label(self):
+        """One label per domain, one value per witness key."""
+        other = format_record(bytes(range(32)))
+        resolve = fake_dns({"_zeitwerk.example.org": [LIVE_RECORD, other]})
+        keys, _ = published_keys("example.org", resolve)
+        self.assertEqual(keys, [LIVE_KEY, bytes(range(32))])
+
+    def test_skips_values_that_are_not_zw0_records(self):
+        """The label may later hold other versions next to zw0."""
+        resolve = fake_dns({"_zeitwerk.example.org": ["v=zw1; k=ed448; p=AAAA", LIVE_RECORD]})
+        keys, _ = published_keys("example.org", resolve)
+        self.assertEqual(keys, [LIVE_KEY])
+
+    def test_no_record_is_no_keys(self):
+        self.assertEqual(published_keys("example.org", fake_dns({})), ([], True))
+
+    def test_passes_on_whether_dnssec_validated_the_answer(self):
+        resolve = fake_dns({"_zeitwerk.example.org": [LIVE_RECORD]}, authenticated=False)
+        _, authenticated = published_keys("example.org", resolve)
+        self.assertFalse(authenticated)
 
 
 class DnsRecordCommandTests(unittest.TestCase):
