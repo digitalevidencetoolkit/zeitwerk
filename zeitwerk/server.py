@@ -35,7 +35,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from zeitwerk.epochtree import DIGEST_SIZE, check_digest
+from zeitwerk.epochtree import DIGEST_SIZE, MAX_LEAVES, check_digest
 from zeitwerk.gitrepo import ensure_repo, set_remote
 from zeitwerk.signer import Signer
 from zeitwerk.status import witness_status
@@ -53,6 +53,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 14788
 DEFAULT_DATA_DIR = Path.home() / ".zeitwerk"
 READ_TIMEOUT = 10.0  # seconds a client gets to send its request, then we hang up
+STATUS_TTL = 30.0  # seconds one status.json answer stands; working one out runs several git processes
 STATUS_PAGE = resources.files("zeitwerk").joinpath("status.html").read_bytes()
 
 
@@ -148,10 +149,20 @@ class Handler(BaseHTTPRequestHandler):
         self._reply(200, self.server.signer.public_key, "application/octet-stream")
 
     def get_status(self):
-        """What the status page shows, worked out afresh on every request."""
+        """What the status page shows, worked out afresh every STATUS_TTL seconds at most.
+
+        Every open status page asks once a minute, and each answer runs git
+        once per mirror and more: on a small box, many pages at once would
+        be the easy way to knock the witness over. They share one answer.
+        """
         server = self.server
-        body = witness_status(server.store, server.signer, server.repo, server.now(), server.started)
-        self._reply(200, json.dumps(body), "application/json")
+        with server.status_lock:  # one round of git at a time, however many ask
+            now = server.now()
+            if not 0 <= now - server.status_at < STATUS_TTL:  # stale, or the clock was set back
+                status = witness_status(server.store, server.signer, server.repo, now, server.started)
+                server.status_json, server.status_at = json.dumps(status), now
+            body = server.status_json
+        self._reply(200, body, "application/json")
 
     def _reply(self, status: int, body: str | bytes, content_type: str = "text/plain") -> None:
         if isinstance(body, str):
@@ -172,6 +183,7 @@ def make_server(
     port: int = DEFAULT_PORT,
     now=time.time,
     recover_uri: str | None = None,
+    max_leaves: int = MAX_LEAVES,
 ) -> ThreadingHTTPServer:
     """`data_dir` holds the database and the signing key; reuse it to restart.
 
@@ -179,6 +191,9 @@ def make_server(
     `recover_uri` goes into every pending receipt: where its holder comes
     back to. Left out, it is the address the server is bound to, which only
     suits a local run; a public server names its own.
+    `max_leaves` is how many fingerprints an hour takes before it answers
+    503. Everything an hour takes is pushed to public git for good, so a
+    public server caps it far below what the tree allows.
     """
     data_dir = Path(data_dir)
     data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)  # the private key lives here
@@ -188,7 +203,9 @@ def make_server(
     server.started = now()  # the status page's "up since"
     bound_host, bound_port = server.server_address[:2]  # port=0 gets a real one here
     server.recover_uri = recover_uri or f"http://{bound_host}:{bound_port}"
-    server.store = Store(data_dir / "zeitwerk.db")
+    server.status_lock = threading.Lock()
+    server.status_json, server.status_at = "", float("-inf")  # the last status.json, and when
+    server.store = Store(data_dir / "zeitwerk.db", max_leaves=max_leaves)
     server.signer = Signer(data_dir / "signer.pem")
     server.repo = data_dir / "repo"
     try:
@@ -235,6 +252,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="default: %(default)s")
     parser.add_argument("--recover-uri", help="what pending receipts point back to (default: the bound address)")
     parser.add_argument(
+        "--max-leaves",
+        type=int,
+        default=MAX_LEAVES,
+        help="fingerprints an hour takes before answering 503 (default: %(default)s, the tree's limit)",
+    )
+    parser.add_argument(
         "--remote",
         action="append",
         default=[],
@@ -248,7 +271,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    server = make_server(args.data_dir, args.host, args.port, recover_uri=args.recover_uri)
+    server = make_server(args.data_dir, args.host, args.port, recover_uri=args.recover_uri, max_leaves=args.max_leaves)
     for name, url in args.remote:
         try:
             set_remote(server.repo, name, url)

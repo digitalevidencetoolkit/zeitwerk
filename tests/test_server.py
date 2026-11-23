@@ -18,7 +18,8 @@ import zeitwerk  # noqa: F401  (runs the python-opentimestamps path shim)
 from opentimestamps.core.serialize import BytesDeserializationContext
 from opentimestamps.core.timestamp import Timestamp
 from zeitwerk import ZeitwerkPendingAttestation, deserialize_attestation, serialize_attestation
-from zeitwerk.server import Handler, make_server, parse_args, start_closer
+from zeitwerk.epochtree import MAX_LEAVES
+from zeitwerk.server import STATUS_TTL, Handler, make_server, parse_args, start_closer
 from zeitwerk.store import Store
 from zeitwerk.witness import EPOCH_SECONDS, close_due, publish_due, verify_signed_receipt
 
@@ -121,12 +122,44 @@ class ServerTests(unittest.TestCase):
         self.assertEqual((resp.status, resp.getheader("Content-Type")), (200, "text/html; charset=utf-8"))
         self.assertIn(b"status.json", resp.read())  # where the page gets its numbers
 
+    def test_the_status_page_warns_that_what_is_sent_is_public_for_good(self):
+        _, page = self._request("GET", "/")
+        self.assertIn(b"public for good", page)
+
     def test_status_json_shows_this_hour_open(self):
         self._request("POST", "/digest", b"\x0d" * 32)
         status, body = self._request("GET", "/status.json")
         self.assertEqual(status, 200)
         [hour] = json.loads(body)["hours"]  # the other tests submit to epoch 7 too: no exact count
         self.assertEqual((hour["epoch"], hour["state"]), (7, "open"))
+
+
+class ServerStatusCacheTests(unittest.TestCase):
+    """Working out status.json runs git, so the open status pages share one answer."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.now = FAKE_NOW
+        self.server = start(tmp.name, now=lambda: self.now)
+        self.addCleanup(stop, self.server)
+        self.first = request(self.server, "GET", "/status.json")[1]
+        request(self.server, "POST", "/digest", b"\x0e" * 32)
+
+    def fingerprints(self):
+        return json.loads(request(self.server, "GET", "/status.json")[1])["fingerprints"]
+
+    def test_an_answer_stands_for_status_ttl_seconds(self):
+        self.now += STATUS_TTL - 1
+        self.assertEqual(request(self.server, "GET", "/status.json")[1], self.first)
+
+    def test_then_it_is_worked_out_afresh(self):
+        self.now += STATUS_TTL
+        self.assertEqual(self.fingerprints(), 1)
+
+    def test_a_clock_set_back_works_it_out_afresh(self):
+        self.now -= 1
+        self.assertEqual(self.fingerprints(), 1)
 
 
 class ServerRecoverUriTests(unittest.TestCase):
@@ -318,6 +351,10 @@ class ArgsTests(unittest.TestCase):
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             parse_args(["--remote", "git@github.com:o/r.git"])
 
+    def test_max_leaves_is_the_trees_limit_unless_given(self):
+        self.assertEqual(parse_args([]).max_leaves, MAX_LEAVES)
+        self.assertEqual(parse_args(["--max-leaves", "5000"]).max_leaves, 5000)
+
 
 class CloserTests(unittest.TestCase):
     """The background thread that seals each finished hour."""
@@ -399,6 +436,24 @@ class ServerRefusalTests(unittest.TestCase):
             request(self.server, "POST", "/digest", b"\x07" * 32),
             (503, b"Epoch full, try again next hour"),
         )
+
+
+class ServerMaxLeavesTests(unittest.TestCase):
+    """A public witness caps each hour, bounding what anyone can push to its repo."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.server = start(tmp.name, max_leaves=2)
+        self.addCleanup(stop, self.server)
+        for digest in (b"\x08" * 32, b"\x09" * 32):
+            request(self.server, "POST", "/digest", digest)
+
+    def test_a_fingerprint_past_the_cap_is_503(self):
+        self.assertEqual(request(self.server, "POST", "/digest", b"\x0a" * 32)[0], 503)
+
+    def test_a_fingerprint_already_in_a_full_hour_still_gets_its_receipt(self):
+        self.assertEqual(request(self.server, "POST", "/digest", b"\x08" * 32)[0], 200)
 
 
 if __name__ == "__main__":

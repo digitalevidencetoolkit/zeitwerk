@@ -42,6 +42,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 footer { padding: 25px 0; text-align: center; font-size: .85em; color: var(--muted); }
 
 .note { color: var(--muted); font-size: .9em; margin-top: 0; }
+.notice { border-left: 3px solid #fab219; padding-left: .8em; font-size: .9em; }
 .health { font-size: 1.15em; margin: 1.2em 0 .2em; }
 .health .dot {
   display: inline-block; width: .7em; height: .7em; border-radius: 50%;
@@ -104,6 +105,7 @@ summary { cursor: pointer; color: var(--link); }
 
 <main>
   <p>This is a <b>Zeitwerk witness</b>. Every hour, it seals the SHA-256 fingerprints it was sent into one tree, signs the root, and publishes the whole list to public git mirrors. It never sees a document.</p>
+  <p class="notice"><b>Anything sent here is public for good.</b> Each fingerprint is published to public git repositories, and nothing can take it back out, so send SHA-256 fingerprints only. Zeitwerk is a testnet for now.</p>
 
   <div id="health" class="health"><span class="dot"></span><b id="health-label">Loading…</b><ul id="health-detail"></ul></div>
   <div id="meta" class="note"></div>

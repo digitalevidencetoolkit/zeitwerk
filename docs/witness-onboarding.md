@@ -118,7 +118,21 @@ witness.example.org {
 }
 ```
 
-Once it is reachable, tell the witness its own address with `--recover-uri https://witness.example.org` in the unit's `ExecStart`. Every pending receipt includes that URI as the place to come back to for the upgrade.
+Before anyone else can submit, cap each hour with `--max-leaves`. Everything an hour takes is pushed to your public repositories for good, and the tree allows a million fingerprints an hour: about 100 MB of history, in one hour, from one script. `--max-leaves 5000` keeps a full hour under half a megabyte; once it is full, the witness answers 503 until the next hour. Pick a number above the biggest batch you expect.
+
+Once it is reachable, tell the witness its own address with `--recover-uri https://witness.example.org`. Every pending receipt includes that URI as the place to come back to for the upgrade.
+
+Set both in an override rather than in the unit file, so they are yours whatever the template becomes. `sudo systemctl edit zeitwerk-witness` opens it; empty `ExecStart` first, then the whole command:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/opt/zeitwerk/.venv/bin/python -m zeitwerk.server \
+    --data-dir /var/lib/zeitwerk --host 127.0.0.1 --port 14788 \
+    --max-leaves 5000 --recover-uri https://witness.example.org
+```
+
+Then `sudo systemctl restart zeitwerk-witness`, and `systemctl cat zeitwerk-witness` shows the override after the unit.
 
 Nothing the witness serves is secret. We use TLS for integrity and convention, but it does not deliver confidentiality.
 
@@ -232,3 +246,49 @@ aws ec2 authorize-security-group-ingress --group-id $SG \
 ```
 
 Continue with [Setup](#setup) over `ssh admin@zeitwerk-witness`.
+
+### A4. Open it to the public, for a while
+
+Tailscale Funnel serves the witness at `https://<machine>.<tailnet>.ts.net` without opening an inbound port: the box still only dials out. Turn on HTTPS certificates and Funnel for the machine in the admin console first, set `--max-leaves` and `--recover-uri https://<machine>.<tailnet>.ts.net` (see [TLS and exposure](#tls-and-exposure)), then:
+
+```sh
+sudo tailscale funnel --bg 14788    # public from now on
+tailscale funnel status
+sudo tailscale funnel reset         # private again
+```
+
+The ts.net address ends up in every pending receipt issued meanwhile and stops answering once Funnel is off. Those receipts still upgrade: each names its hour, so `zeitwerk verify` rebuilds it from the published repository. For a permanent endpoint, use your own domain (A5).
+
+### A5. Your own domain, with Caddy
+
+How the project's witness became `witness.digitalevidencetoolkit.org`: a fixed address, a DNS name, and Caddy for HTTPS. Ports 80 and 443 are then open to everyone; SSH stays on the tailnet.
+
+A fixed address first. The automatic public IP changes whenever the instance is stopped and started; an Elastic IP doesn't, and costs the same while attached, since it replaces the automatic one. It needs `ec2:AllocateAddress` and `ec2:AssociateAddress`, which A0's policy leaves out: add them, or do this step in the console.
+
+```sh
+EIP=$(aws ec2 allocate-address --domain vpc --query AllocationId --output text)
+aws ec2 associate-address --instance-id <instance-id> --allocation-id $EIP
+aws ec2 describe-addresses --allocation-ids $EIP --query 'Addresses[0].PublicIp' --output text
+```
+
+Point an `A` record for `witness.example.org` at that address. Then install Caddy from its own repository (bookworm's is 2.6), and make `/etc/caddy/Caddyfile` the two lines from [TLS and exposure](#tls-and-exposure). Leave out any `log` directive: Caddy then keeps no access log, so it collects no client IPs, like the witness.
+
+```sh
+curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
+    | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
+    | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt-get update && sudo apt-get install -y caddy
+```
+
+Set `--max-leaves` and `--recover-uri https://witness.example.org` in the override, then open the door, last. Port 80 answers Let's Encrypt and redirects to HTTPS.
+
+```sh
+aws ec2 authorize-security-group-ingress --group-id $SG --ip-permissions \
+    'IpProtocol=tcp,FromPort=80,ToPort=80,IpRanges=[{CidrIp=0.0.0.0/0,Description=caddy}]' \
+    'IpProtocol=tcp,FromPort=443,ToPort=443,IpRanges=[{CidrIp=0.0.0.0/0,Description=caddy}]'
+sudo systemctl restart caddy    # fetches its certificate, then serves
+curl -s https://witness.example.org/key | xxd -p    # the same key as on the box
+```
+
+Closing it again is `revoke-security-group-ingress` with the same rules and `sudo systemctl disable --now caddy`. Receipts issued meanwhile keep their URL, and still upgrade from the published repository.
