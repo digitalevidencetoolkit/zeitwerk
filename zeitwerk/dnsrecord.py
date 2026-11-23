@@ -4,12 +4,20 @@
 
 Same shape as a DKIM key record: tag=value pairs separated by ';'. Unknown
 tags are ignored, so a tag can be added later without a new version.
+
+A domain vouches for several keys with several TXT values at the one label.
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
+from typing import Callable
+
+# Looks up the TXT values at a name: (values, whether DNSSEC validated the
+# answer). An empty list when there is no record; DnsLookupError when the
+# lookup itself fails.
+Resolve = Callable[[str], tuple[list[str], bool]]
 
 VERSION = "zw0"
 KEY_TYPE = "ed25519"
@@ -51,3 +59,50 @@ def parse_record(record: str) -> bytes:
     if len(key) != KEY_SIZE:
         raise ValueError(f"Ed25519 public key must be {KEY_SIZE} bytes, got {len(key)}")
     return key
+
+
+class DnsLookupError(Exception):
+    """The lookup failed, so there is no answer to judge the record by."""
+
+
+def record_name(domain: str) -> str:
+    """Where a domain publishes its witness keys."""
+    return f"_zeitwerk.{domain}"
+
+
+def published_keys(domain: str, resolve: Resolve) -> tuple[list[bytes], bool]:
+    """The zw0 keys a domain publishes, and whether DNSSEC validated the answer.
+
+    Values that aren't valid zw0 records are skipped: the label may later
+    hold other versions next to this one.
+    """
+    values, authenticated = resolve(record_name(domain))
+    keys = []
+    for value in values:
+        try:
+            keys.append(parse_record(value))
+        except ValueError:
+            continue
+    return keys, authenticated
+
+
+def resolve_txt(name: str) -> tuple[list[str], bool]:
+    """Resolve, through the system resolver, with dnspython (zeitwerk[dns])."""
+    try:
+        import dns.exception
+        import dns.flags
+        import dns.resolver
+    except ImportError as e:
+        raise DnsLookupError("DNS lookups need dnspython: pip install 'zeitwerk[dns]'") from e
+
+    resolver = dns.resolver.Resolver()
+    resolver.flags = dns.flags.RD | dns.flags.AD  # ask the resolver to say whether it validated
+    try:
+        answer = resolver.resolve(name, "TXT")
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+        return [], False
+    except dns.exception.DNSException as e:
+        raise DnsLookupError(f"DNS lookup for {name} failed: {e}") from e
+    # A TXT value longer than 255 bytes comes as several strings, to be joined.
+    values = [b"".join(rdata.strings).decode(errors="replace") for rdata in answer]
+    return values, bool(answer.response.flags & dns.flags.AD)
