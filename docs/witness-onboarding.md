@@ -145,6 +145,17 @@ Nothing the witness serves is secret. We use TLS for integrity and convention, b
 - **Updates**: `sudo sh /opt/zeitwerk/deploy/update.sh` brings the witness to the latest `main`. It lists the commits it adds and takes away, installs them, restarts the service, then checks the witness answers with the same public key; one that came back with another key isn't using its signing key, and is stopped. Name a tag or commit to deploy that instead (going back included: it prints the command), or add `--dry-run` to only look. From a laptop with a clone of this repository, `make deploy WITNESS=you@your-witness` (or `make deploy-check`) runs the same script over ssh, even on a witness that predates it.
 - **Moving to another machine**: a witness *is* its data directory (`signer.pem`, `zeitwerk.db`, `repo/` with its remotes in `.git/config`). Stop the old one, copy the directory over (compare `sha256sum signer.pem zeitwerk.db` and `git rev-parse HEAD` at both ends), give the new box the deploy key on every remote, start it. Then make sure the old copy can never start again, e.g. by renaming it. Two live copies of one key would sign different roots for the same hour, which to a verifier looks exactly like a stolen key.
 
+## Publishing your key in DNS
+
+Verifiers take your public key from your epochs repository, which anyone who copies the repository can swap for their own. Publish it in a DNS zone you control as well, and `zeitwerk verify --dns <your domain>` checks the signer of an hour against it. From any clone of your repository:
+
+```sh
+zeitwerk dns-record signers/<key_id>.pub
+# v=zw0; k=ed25519; p=<your key, base64>
+```
+
+Add that value as a TXT record at `_zeitwerk.<your domain>`, with DNSSEC on the zone if your registrar offers it. `--dns` reads every TXT value at that name, so several witnesses can share one. Check it with `dig +short TXT _zeitwerk.<your domain>`, then with `zeitwerk verify <a fingerprint> --epochs <your clone> --dns <your domain>`, whose `dns` line should say `confirmed`.
+
 ## Registering with the federation
 
 Email <hi@digitalevidencetoolkit.org> with:
@@ -152,6 +163,7 @@ Email <hi@digitalevidencetoolkit.org> with:
 1. Your public key: the output of `curl -s http://127.0.0.1:14788/key | xxd -p` (also published as `signers/<key_id>.pub` in your epochs repo).
 2. The URL of your epochs repository.
 3. Your public endpoint (if you expose one) and an operational contact.
+4. The domain that publishes your key (see above).
 
 We add your key and repo to the federation list; verifiers then count your signature toward the N-of-M threshold. The governance detail (key rotation, signer exit) is in the federation design note.
 
