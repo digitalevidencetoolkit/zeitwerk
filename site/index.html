@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zeitwerk witnesses</title>
+<meta name="description" content="The witnesses that sign Zeitwerk timestamps, each read from its own public record, and each key checked in its organisation's DNS.">
+<!--
+  Served from GitHub Pages at zeitwerk.digitalevidencetoolkit.org, with federation.json beside it.
+  Everything is read in the visitor's browser: each witness's record from GitHub, each key's
+  DNS record through Cloudflare's DNS-over-HTTPS. It never contacts a witness, so it keeps
+  working whether or not they are up, and no witness vouches for another's numbers.
+-->
+<style>
+:root {
+  --bg: #fbfbfb;
+  --card: #fff;
+  --heading: #222;
+  --muted: #777;
+  --link: #3273dc;
+  --rule: #ddd;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --bad: #d64545;
+}
+body {
+  font-family: "PT Serif", serif;
+  font-size: 1.2em;
+  margin: auto;
+  padding: 20px 16px;
+  max-width: 900px;
+  background: var(--bg);
+  color: #444;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+}
+h2, h3, h4 { color: var(--heading); }
+h2 { font-size: 1.4rem; }
+h3 { font-size: 1.1rem; margin: 0; }
+h4 { margin: 1.8em 0 .3em; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+nav a { margin-right: 8px; }
+.title:hover { text-decoration: none; }
+strong, b { color: var(--heading); }
+code { font-family: monospace; padding: 2px; background: #f2f2f2; border-radius: 3px; font-size: .9em; }
+footer { padding: 25px 0; text-align: center; font-size: .85em; color: var(--muted); }
+.note { color: var(--muted); font-size: .9em; margin-top: 0; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 1rem; }
+/* Cards in a row are stretched to one height; links sit at the bottom of each, so rows line up. */
+.card { background: var(--card); border: 1px solid var(--rule); border-radius: 6px; padding: 1em 1.1em; font-size: .9em; min-width: 0; display: flex; flex-direction: column; }
+.card .links { margin-top: auto; padding-top: .5em; }
+.card.open { background: transparent; border-style: dashed; }
+.card p { margin: .5em 0 0; }
+/* Label, value and sub-line of each stat are cells of one grid, filled column by column,
+   so the three numbers stay on one line however the labels wrap. */
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, auto); grid-auto-flow: column; column-gap: .8em; margin: .9em 0 .2em; }
+.stats .label { font-size: .8em; color: var(--muted); align-self: end; }
+.stats .value { font-size: 1.5em; color: var(--heading); line-height: 1.2; font-variant-numeric: tabular-nums; }
+.stats .sub { font-size: .8em; color: var(--muted); }
+/* A check's state is in its glyph and its words; the colour only repeats it. */
+.check { padding-left: 1.3em; text-indent: -1.3em; }
+.check::before { content: "–"; display: inline-block; width: 1.3em; text-indent: 0; font-weight: bold; color: #999; }
+.check.good::before { content: "✓"; color: var(--good); }
+.check.warning::before { content: "!"; color: #b37f00; }
+.check.bad::before { content: "✕"; color: var(--bad); }
+.check .where { display: block; font-size: .85em; }
+.links a { margin-right: .8em; white-space: nowrap; }
+.muted { color: var(--muted); }
+.loading { opacity: .6; }
+#checked { margin-top: 1.5em; }
+</style>
+</head>
+<body>
+<header>
+  <a href="./" class="title"><h2>Zeitwerk</h2></a>
+  <nav>
+    <a href="https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/">About</a>
+    <a href="https://github.com/digitalevidencetoolkit/zeitwerk">Code</a>
+    <a href="federation.json">Data</a>
+  </nav>
+</header>
+
+<main>
+  <p>Zeitwerk timestamps are signed by independent <b>witnesses</b>. Every hour, each one seals the SHA-256 fingerprints it was sent into one tree, signs the root, and publishes the whole list to its own public record.</p>
+  <p class="note">Each witness signs its own hours, so a fingerprint sent to several is attested by each. Checking that they agree is the next piece.</p>
+
+  <h4 id="witnesses-heading">Witnesses</h4>
+  <div class="cards" id="witnesses" aria-labelledby="witnesses-heading"></div>
+
+  <h4 id="mirrors-heading">Mirrors</h4>
+  <p class="note">Copies of a witness's record, kept by someone else. Any copy is enough to verify a timestamp, so each one makes the record harder to lose.</p>
+  <div class="cards" id="mirrors" aria-labelledby="mirrors-heading"></div>
+
+  <h4 id="joining-heading">Joining</h4>
+  <div class="cards" id="joining" aria-labelledby="joining-heading"></div>
+
+  <p class="note" id="checked"></p>
+</main>
+
+<footer>
+  <a href="https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/">Zeitwerk</a> is free, open-source timestamping without the blockchain ·
+  <a href="https://github.com/digitalevidencetoolkit/zeitwerk">source</a> ·
+  <a href="https://github.com/digitalevidencetoolkit/zeitwerk/blob/main/docs/witness-onboarding.md">run a witness</a>
+</footer>
+
+<script>
+"use strict";
+// GitHub allows 60 unauthenticated API requests an hour per visitor, and a load takes
+// one per witness and one per mirror on GitHub: every 5 minutes leaves room for a page
+// left open on a projector.
+const REFRESH_MS = 5 * 60 * 1000;
+const DOH = "https://cloudflare-dns.com/dns-query";
+const LEAVES = /^epochs\/(\d{4})\/(\d{2})\/(\d{2})\/(\d{2})\/leaves\.bin$/;  // one per published hour
+const DIGEST_SIZE = 32;
+
+const $ = (id) => document.getElementById(id);
+const number = (n) => n.toLocaleString("en-GB");
+const plural = (n, word) => `${number(n)} ${word}${n === 1 ? "" : "s"}`;
+const utc = (options) => new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", hourCycle: "h23", ...options });
+const hourLabel = utc({ day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const timeLabel = utc({ hour: "2-digit", minute: "2-digit" });
+const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+
+// Build DOM from data with textContent only: everything shown comes from federation.json or a record.
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  Object.assign(node, props);
+  node.append(...children);
+  return node;
+}
+
+function ago(date) {
+  const hours = Math.floor((Date.now() - date.getTime()) / 3600000);
+  if (hours < 1) return "this hour";
+  if (hours < 48) return `${hours} h ago`;
+  return `${plural(Math.floor(hours / 24), "day")} ago`;
+}
+
+// "https://github.com/owner/repo" among a witness's records, as "owner/repo".
+function githubRepo(records) {
+  for (const url of records) {
+    const match = url.match(/^https:\/\/github\.com\/([^/]+\/[^/]+?)\/?$/);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+function forgeName(url) {
+  const host = new URL(url).hostname;
+  return { "github.com": "GitHub", "codeberg.org": "Codeberg", "gitlab.com": "GitLab" }[host] || host;
+}
+
+async function fetchOk(url, options) {
+  const response = await fetch(url, options);
+  if (response.ok) return response;
+  const reset = response.headers.get("x-ratelimit-reset");
+  if ((response.status === 403 || response.status === 429) && reset) {
+    throw new Error(`GitHub's limit for your connection is used up until ${timeLabel.format(new Date(reset * 1000))} UTC`);
+  }
+  throw new Error(`${new URL(url).hostname} answered ${response.status}`);
+}
+
+// One API request: every file in the record. Each published hour has a leaves.bin of
+// 32 bytes per fingerprint, at epochs/YYYY/MM/DD/HH/.
+async function readRecord(repo) {
+  const tree = await (await fetchOk(`https://api.github.com/repos/${repo}/git/trees/main?recursive=1`)).json();
+  let fingerprints = 0, latest = null, hours = 0;
+  for (const entry of tree.tree) {
+    const match = entry.path.match(LEAVES);
+    if (!match) continue;
+    hours++;
+    fingerprints += entry.size / DIGEST_SIZE;
+    const [, y, m, d, h] = match.map(Number);
+    const start = new Date(Date.UTC(y, m - 1, d, h));
+    if (!latest || start > latest) latest = start;
+  }
+  return { hours, fingerprints, latest, truncated: tree.truncated };
+}
+
+// The TXT value in a DoH JSON answer: one or more quoted strings, joined.
+function txtValue(data) {
+  return Array.from(data.matchAll(/"((?:[^"\\]|\\.)*)"/g), (m) => m[1].replace(/\\(.)/g, "$1")).join("");
+}
+
+// The raw key in a zw0 record, or null: the rules of zeitwerk/dnsrecord.py parse_record.
+function parseRecord(record) {
+  const tags = {};
+  for (const part of record.split(";")) {
+    if (!part.trim()) continue;
+    const at = part.indexOf("=");
+    const name = at < 0 ? "" : part.slice(0, at).trim();
+    if (!name || name in tags) return null;
+    tags[name] = part.slice(at + 1).trim();
+  }
+  if (tags.v !== "zw0" || tags.k !== "ed25519" || !("p" in tags)) return null;
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(tags.p)) return null;
+  let key;
+  try {
+    key = Uint8Array.from(atob(tags.p), (c) => c.charCodeAt(0));
+  } catch {
+    return null;  // not valid base64
+  }
+  return key.length === 32 ? key : null;
+}
+
+// Does the domain publish the key that signs this record? As `zeitwerk verify --dns`:
+// the whole 32-byte key must be among the zw0 values at _zeitwerk.<domain>.
+async function checkDns(repo, keyId, domain) {
+  const name = `_zeitwerk.${domain}`;
+  const [keyBuffer, answer] = await Promise.all([
+    fetchOk(`https://raw.githubusercontent.com/${repo}/main/signers/${keyId}.pub`).then((r) => r.arrayBuffer()),
+    fetchOk(`${DOH}?name=${encodeURIComponent(name)}&type=TXT`, { headers: { accept: "application/dns-json" } }).then((r) => r.json()),
+  ]);
+  const key = new Uint8Array(keyBuffer);
+  const id = hex(new Uint8Array(await crypto.subtle.digest("SHA-256", key)).slice(0, 8));
+  if (key.length !== 32 || id !== keyId) throw new Error(`signers/${keyId}.pub is not the key with that id`);
+  if (answer.Status !== 0 && answer.Status !== 3) throw new Error(`the DNS lookup for ${name} failed`);  // 3: no such name
+  const keys = (answer.Answer || []).filter((a) => a.type === 16).map((a) => parseRecord(txtValue(a.data))).filter(Boolean);
+  const confirmed = keys.some((k) => k.every((byte, i) => byte === key[i]));
+  return { name, confirmed, published: keys.length, dnssec: answer.AD === true };
+}
+
+function dnsLine(witness, dns, error) {
+  if (!witness.dns) return el("p", { className: "check", textContent: "No DNS domain listed for this key." });
+  if (error) return el("p", { className: "check", textContent: `DNS not checked: ${error.message}.` });
+  if (!dns) return el("p", { className: "check loading", textContent: "Checking the key in DNS…" });
+  const where = el("span", { className: "where" }, el("code", { textContent: dns.name }));
+  if (dns.confirmed) {
+    return el("p", { className: "check good" },
+      dns.dnssec ? "Key confirmed in DNS, signed with DNSSEC." : "Key confirmed in DNS, without DNSSEC: the answer was not validated.", where);
+  }
+  if (dns.published === 0) return el("p", { className: "check warning" }, "No key published in DNS yet.", where);
+  return el("p", { className: "check bad" }, `DNS publishes ${plural(dns.published, "key")}, but not this one.`, where);
+}
+
+// One stat as three cells of the .stats grid: label, value, sub-line.
+function stat(label, value, sub = "") {
+  return [
+    el("div", { className: "label", textContent: label }),
+    el("div", { className: "value", textContent: value }),
+    el("div", { className: "sub", textContent: sub }),
+  ];
+}
+
+function witnessCard(witness, state) {
+  const { record, recordError, dns, dnsError } = state;
+  let body;
+  if (recordError) {
+    body = el("p", { className: "check bad", textContent: `Record not read: ${recordError.message}.` });
+  } else if (!record) {
+    body = el("p", { className: "muted loading", textContent: "Reading the record…" });
+  } else {
+    body = el("div", {},
+      el("div", { className: "stats" },
+        ...stat("Hours published", number(record.hours)),
+        ...stat("Fingerprints", number(record.fingerprints)),
+        ...(record.latest ? stat("Latest hour", ago(record.latest), `${hourLabel.format(record.latest)} UTC`) : stat("Latest hour", "–", "nothing published yet")),
+      ),
+      record.truncated ? el("p", { className: "note", textContent: "GitHub cut the listing short, so these counts are a lower bound." }) : "",
+    );
+  }
+  return el("article", { className: "card" },
+    el("h3", { textContent: witness.operator }),
+    el("p", {}, "Key ", el("code", { textContent: witness.key_id })),
+    body,
+    dnsLine(witness, dns, dnsError),
+    el("p", { className: "links" },
+      ...witness.records.map((url) => el("a", { href: url, textContent: forgeName(url) })),
+      witness.status ? el("a", { href: witness.status, textContent: "Status page" }) : "",
+    ),
+  );
+}
+
+// A copy on GitHub, set against the witness's own record: both counted the same way.
+function copyLine(copy, record) {
+  const { record: mine, recordError } = copy;
+  if (recordError) return el("p", { className: "check bad", textContent: `Copy not read: ${recordError.message}.` });
+  if (!mine || !record) return el("p", { className: "check loading", textContent: "Comparing with the record…" });
+  if (mine.hours > record.hours) {
+    return el("p", { className: "check bad", textContent: `It holds ${plural(mine.hours, "hour")} and the record only ${number(record.hours)}: the record lost hours since they were copied.` });
+  }
+  if (mine.hours === record.hours) {
+    const latest = record.latest ? `, the latest at ${hourLabel.format(record.latest)} UTC` : "";
+    return el("p", { className: "check good", textContent: `In step with the record: ${plural(mine.hours, "hour")}${latest}.` });
+  }
+  // Copied once an hour, so a copy is often an hour or two behind; more is worth a look.
+  const behind = Math.round((record.latest - (mine.latest || 0)) / 3600000);
+  return el("p", { className: behind > 2 ? "check warning" : "check", textContent: `Behind the record by ${plural(record.hours - mine.hours, "hour")}; it copies once an hour.` });
+}
+
+function mirrorCard(mirror, witnesses) {
+  const of = witnesses.find((w) => w.key_id === mirror.of);
+  const readable = githubRepo([mirror.url]);
+  return el("article", { className: "card" },
+    el("h3", { textContent: mirror.operator }),
+    el("p", {}, `${mirror.kind || "Mirror"} of ${of ? `${of.operator}'s` : "a"} record, key `, el("code", { textContent: mirror.of }),
+      mirror.from ? `, copied from ${forgeName(mirror.from)}.` : "."),
+    readable
+      ? el("div", {},
+          el("p", { className: "note", textContent: "It copies the record on its own schedule, and the witness has no access to it." }),
+          copyLine(copies.get(mirror.url) || {}, (states.get(mirror.of) || {}).record))
+      : el("p", { className: "note", textContent: "It copies the record on its own schedule, and the witness has no access to it. Its server doesn't let browsers read it, so there are no numbers here: open it to compare." }),
+    el("p", { className: "links" }, el("a", { href: mirror.url, textContent: readable ? forgeName(mirror.url) : new URL(mirror.url).hostname })),
+  );
+}
+
+function joiningCard(entry) {
+  return el("article", { className: "card open" },
+    el("h3", { textContent: entry.operator }),
+    el("p", { className: "muted", textContent: "A witness is being set up. It appears above once its first hour is published." }),
+  );
+}
+
+function openSlotCard() {
+  return el("article", { className: "card open" },
+    el("h3", { textContent: "Your institution" }),
+    el("p", { textContent: "32 bytes an hour, on a 512 MB machine, and one TXT record in your DNS zone." }),
+    el("p", { className: "links" },
+      el("a", { href: "https://github.com/digitalevidencetoolkit/zeitwerk/blob/main/docs/witness-onboarding.md", textContent: "Run a witness" }),
+      el("a", { href: "https://github.com/digitalevidencetoolkit/zeitwerk/blob/main/federation.json", textContent: "Get listed here" }),
+    ),
+  );
+}
+
+let federation = null;
+const states = new Map();  // key_id -> what has been read so far, so a refresh keeps the last numbers
+const copies = new Map();  // a mirror's url -> the same, for mirrors on GitHub
+
+function render() {
+  $("witnesses").replaceChildren(...federation.witnesses.map((w) => witnessCard(w, states.get(w.key_id) || {})));
+  $("mirrors").replaceChildren(...(federation.mirrors || []).map((m) => mirrorCard(m, federation.witnesses)));
+  $("joining").replaceChildren(...(federation.joining || []).map(joiningCard), openSlotCard());
+}
+
+async function refresh() {
+  const checks = federation.witnesses.map(async (witness) => {
+    const state = states.get(witness.key_id) || {};
+    states.set(witness.key_id, state);
+    const repo = githubRepo(witness.records);
+    if (!repo) {
+      state.recordError = new Error("no GitHub copy of this record, and other forges can't be read from a browser");
+      return;
+    }
+    await Promise.all([
+      readRecord(repo).then((r) => { state.record = r; state.recordError = null; }, (e) => { state.recordError = e; }).finally(render),
+      witness.dns
+        ? checkDns(repo, witness.key_id, witness.dns).then((d) => { state.dns = d; state.dnsError = null; }, (e) => { state.dnsError = e; }).finally(render)
+        : null,
+    ]);
+  });
+  const copyChecks = (federation.mirrors || []).filter((m) => githubRepo([m.url])).map((mirror) => {
+    const copy = copies.get(mirror.url) || {};
+    copies.set(mirror.url, copy);
+    return readRecord(githubRepo([mirror.url])).then((r) => { copy.record = r; copy.recordError = null; }, (e) => { copy.recordError = e; }).finally(render);
+  });
+  await Promise.all([...checks, ...copyChecks]);
+  $("checked").textContent = `Read in your browser at ${timeLabel.format(new Date())} UTC, again every 5 minutes: each record from GitHub, each key from its organisation's DNS through Cloudflare's DNS-over-HTTPS. This page never contacts a witness, so it works whether or not they are up. Codeberg and other forges don't let browsers read them, so only the GitHub copy of each record is counted.`;
+}
+
+async function start() {
+  try {
+    federation = await (await fetchOk("federation.json", { cache: "no-store" })).json();
+  } catch (error) {
+    $("witnesses").replaceChildren(el("p", { className: "check bad", textContent: `The list of witnesses did not load: ${error.message}.` }));
+    return;
+  }
+  render();
+  await refresh();
+  setInterval(refresh, REFRESH_MS);
+}
+
+start();
+</script>
+</body>
+</html>

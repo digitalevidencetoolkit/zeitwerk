@@ -1,0 +1,27 @@
+name: Pages
+# The witnesses page at zeitwerk.digitalevidencetoolkit.org: site/ plus federation.json,
+# which the page reads from its own site. A pull request that adds a witness to
+# federation.json updates the page once merged.
+on:
+  push:
+    branches: [main]
+    paths: [site/**, federation.json, .github/workflows/pages.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency: { group: pages, cancel-in-progress: true }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir _site && cp site/* federation.json _site/
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: _site }
+      - id: deployment
+        uses: actions/deploy-pages@v4
