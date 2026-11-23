@@ -102,7 +102,7 @@ def resolve_txt(name: str) -> tuple[list[str], bool]:
     except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
         return [], False
     except dns.exception.DNSException as e:
-        raise DnsLookupError(f"{name}: {e}") from e
+        raise DnsLookupError(f"DNS lookup for {name} failed: {e}") from e
     # A TXT value longer than 255 bytes comes as several strings, to be joined.
     values = [b"".join(rdata.strings).decode(errors="replace") for rdata in answer]
     return values, bool(answer.response.flags & dns.flags.AD)

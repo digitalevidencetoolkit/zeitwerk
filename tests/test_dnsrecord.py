@@ -1,13 +1,14 @@
 """Tests for the _zeitwerk TXT record format (#32)."""
 
 import contextlib
+import hashlib
 import io
 import tempfile
 import unittest
 from pathlib import Path
 
 from zeitwerk.cli import main
-from zeitwerk.dnsrecord import format_record, parse_record, published_keys
+from zeitwerk.dnsrecord import DnsLookupError, format_record, parse_record, published_keys
 
 # The record live at _zeitwerk.digitalevidencetoolkit.org, and the key in it.
 LIVE_RECORD = "v=zw0; k=ed25519; p=2mEQqOkv4bAqVifS83aHDZ/tp1hRPZVtPo/NRBOrtig="
@@ -137,6 +138,86 @@ class DnsRecordCommandTests(unittest.TestCase):
             result = main(["dns-record", str(key_file)])
         self.assertEqual(result, 2)
         self.assertIn("32 bytes", err.getvalue())
+
+
+def write_signed_epoch(repo: Path, digest: bytes, epoch: int = 42) -> bytes:
+    """Publish one epoch holding digest, signed by a new witness. Returns its public key."""
+    from zeitwerk.attestation import serialize_attestation
+    from zeitwerk.epochtree import build_epoch_tree, encode_leaf_set
+    from zeitwerk.publisher import write_epoch, write_signer
+    from zeitwerk.signer import Signer
+    from zeitwerk.witness import signed_attestation
+
+    signer = Signer()
+    tree = build_epoch_tree([digest])
+    write_signer(repo, signer.public_key)
+    attestation = serialize_attestation(signed_attestation(signer, epoch, tree.root))
+    write_epoch(repo, epoch, encode_leaf_set(tree.leaves), attestation)
+    return signer.public_key
+
+
+class VerifyDnsTests(unittest.TestCase):
+    """verify --epochs --dns: the signer's key must be the one the domain publishes."""
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        self.digest = hashlib.sha256(b"document1").digest()
+        self.key = write_signed_epoch(self.repo, self.digest)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.repo, ignore_errors=True)
+
+    def verify(self, resolve, *flags):
+        """(exit code, stdout, stderr) of verify --epochs with these flags."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = main(["verify", self.digest.hex(), "--epochs", str(self.repo), *flags], resolve=resolve)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_key_in_dns_with_dnssec(self):
+        resolve = fake_dns({"_zeitwerk.example.org": [format_record(self.key)]})
+        code, out, _ = self.verify(resolve, "--dns", "example.org")
+        self.assertEqual(code, 0)
+        self.assertIn("dns          confirmed for example.org (DNSSEC)", out)
+
+    def test_key_in_dns_without_dnssec_says_so(self):
+        resolve = fake_dns({"_zeitwerk.example.org": [format_record(self.key)]}, authenticated=False)
+        code, out, _ = self.verify(resolve, "--dns", "example.org")
+        self.assertEqual(code, 0)
+        self.assertIn("dns          confirmed for example.org (no DNSSEC: the answer was not validated)", out)
+
+    def test_repo_signed_by_a_key_the_domain_does_not_publish(self):
+        """Someone re-signed the repo with their own key: the signature checks, DNS doesn't."""
+        resolve = fake_dns({"_zeitwerk.example.org": [LIVE_RECORD]})
+        code, _, err = self.verify(resolve, "--dns", "example.org")
+        self.assertEqual(code, 1)
+        self.assertIn("NOT VERIFIED signer", err)
+
+    def test_no_record_at_the_domain(self):
+        code, _, err = self.verify(fake_dns({}), "--dns", "example.org")
+        self.assertEqual(code, 1)
+        self.assertIn("0 keys at _zeitwerk.example.org", err)
+
+    def test_failed_lookup_has_its_own_exit_code(self):
+        def unreachable(name):
+            raise DnsLookupError(f"{name}: timed out")
+        code, _, err = self.verify(unreachable, "--dns", "example.org")
+        self.assertEqual(code, 3)
+        self.assertIn("timed out", err)
+
+    def test_without_dns_nothing_is_looked_up(self):
+        def offline(name):
+            raise AssertionError(f"looked up {name}")
+        code, _, _ = self.verify(offline)
+        self.assertEqual(code, 0)
+
+    def test_dns_with_a_receipt_is_refused(self):
+        """Not built for receipt mode: refuse rather than skip the check."""
+        with contextlib.redirect_stderr(io.StringIO()):
+            code = main(["verify", self.digest.hex(), "--receipt", "r.ots", "--key", "k.pub",
+                         "--dns", "example.org"])
+        self.assertEqual(code, 2)
 
 
 if __name__ == "__main__":
