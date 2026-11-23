@@ -49,17 +49,29 @@ For legal and compliance use cases, we offer paid affidavits as a sustainability
 - [x] Hourly publishing to git, `GET /recover`, third-party verification from the published folder ([#22](https://github.com/digitalevidencetoolkit/zeitwerk/issues/22), [#24](https://github.com/digitalevidencetoolkit/zeitwerk/pull/24)). Hours are published to [GitHub](https://github.com/digitalevidencetoolkit/zeitwerk-epochs) and [Codeberg](https://codeberg.org/digitalevidencetoolkit/zeitwerk-epochs) ([#23](https://github.com/digitalevidencetoolkit/zeitwerk/issues/23))
 - [x] Offline CLI verifier: `zeitwerk verify` and `zeitwerk recover` ([#25](https://github.com/digitalevidencetoolkit/zeitwerk/pull/25))
 - [x] A witness running around the clock, publishing every hour to both forges; [docs/witness-onboarding.md](docs/witness-onboarding.md) is how to run your own
-- [ ] November: written proof format spec, N-of-M growth, public testnet?
+- [x] Signing keys in DNS: `zeitwerk dns-record` prints a witness's TXT record, `zeitwerk verify --dns` checks the signer against it ([#34](https://github.com/digitalevidencetoolkit/zeitwerk/pull/34), [#35](https://github.com/digitalevidencetoolkit/zeitwerk/pull/35))
+- [x] A public witness at [witness.digitalevidencetoolkit.org](https://witness.digitalevidencetoolkit.org), capped per hour ([#37](https://github.com/digitalevidencetoolkit/zeitwerk/pull/37))
+- [ ] November: written proof format spec, N-of-M growth
 
 ⚠️ Receipts are not stable yet: the attestation tags are placeholders for now, so don't rely on anything Zeitwerk issues today.
 
+
+## Try the public witness
+
+Ours runs at https://witness.digitalevidencetoolkit.org, with its status page at the root. Send it a document's SHA-256, never the document itself:
+
+```sh
+openssl dgst -sha256 -binary doc.pdf | curl -s --data-binary @- https://witness.digitalevidencetoolkit.org/digest -o doc.ots
+```
+
+Anything sent there is published for good to public git, so send fingerprints only. Each hour takes up to 5,000; past that the witness answers 503 until the next hour. Its signing key is `6ca8feb89f12145e`, published in our DNS zone at `_zeitwerk.digitalevidencetoolkit.org`. To verify, see [Verify a document](#verify-a-document); the endpoints under Quickstart work against it too.
 
 ## Run a signer
 
 **We need you!**
 The institutions that participate in the federation are the real strength of the system. The commitment is relatively low: a signer runs a small daemon that signs the epoch roots every hour. These are only 32-byte hashes, with no user data and don't require a full server to operate.
 
-[docs/witness-onboarding.md](docs/witness-onboarding.md) is the whole setup: one Python service, one signing key, one git repository, under an hour on a 512 MB VM. [docs/publishing.md](docs/publishing.md) explains what a witness publishes and where.
+[docs/witness-onboarding.md](docs/witness-onboarding.md) is the whole setup: one Python service, one signing key, one git repository, under an hour on a 512 MB VM.
 
 → If you're at a university, library, archive or digital-rights organisation and that sounds doable, [open an issue](https://github.com/digitalevidencetoolkit/zeitwerk/issues/new) or get in touch through the [project page](https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/).
 
@@ -109,11 +121,14 @@ zeitwerk recover doc.pdf --epochs ../zeitwerk-epochs > doc.ots
 
 # I have no receipt: check the public record itself
 zeitwerk verify doc.pdf --epochs ../zeitwerk-epochs
+
+# ...and check the signer's key is the one our domain publishes
+zeitwerk verify doc.pdf --epochs ../zeitwerk-epochs --dns digitalevidencetoolkit.org
 ```
 
 The first argument is a file to hash or a 64-hex fingerprint. Exit code 0 means verified, 1 not verified (reason on stderr), 2 bad input.
 
-[docs/verification.md](docs/verification.md) has an example, the output format and the known gaps; [docs/verification.md](docs/verification.md) does the same checks by hand with the library, and lists how each one can fail. The main gap: the two `--epochs` commands take the signing key from the clone itself, so check that the `signer` line reads `6ca8feb89f12145e`.
+[VERIFICATION.md](VERIFICATION.md) has an example and the output format; [docs/verification.md](docs/verification.md) does the same checks by hand with the library, and lists how each one can fail. On their own, the two `--epochs` commands take the signing key from the clone itself. `--dns` closes that gap: the key must also be published at `_zeitwerk.<domain>`, and the `dns` line says whether a validating resolver confirmed it with DNSSEC.
 
 ## License
 
