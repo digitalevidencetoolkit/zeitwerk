@@ -1,6 +1,6 @@
 # Zeitwerk
 
-> Prove a piece of data existed at a given time — backed by several independent European institutions who'd all have to collude to forge it. No cost to the user, no blockchain, and verifiable forever, even if Zeitwerk itself disappears.
+> Prove a piece of data existed at a given time, signed by independent European organisations rather than a blockchain. No cost to the user, and verifiable forever, even if Zeitwerk itself disappears.
 
 ## What it is
 
@@ -16,7 +16,7 @@ Zeitwerk is for anyone who needs to prove when something existed: researchers pr
 
 Zeitwerk never sees your documents — only SHA-256 hashes thereof. During each hour-long epoch it collects fingerprints, and sorts them into one list to be hashed down to a single value, the _"epoch root"_.
 
-That root gets co-signed by (several) independent institutions, and the full list is published to public mirrors.
+The witness signs that root and publishes the full list to public git mirrors. Independent organisations each run a witness: two do today, each signing its own hours. Checking that several agree on an hour is the next piece.
 
 _Your_ receipt is the short trail from your fingerprint to that root. It is readable by OpenTimestamps tools, yay for interoperability! You get a receipt the moment you submit a file, and it's elevated to a fully-qualified proof when the epoch ends, within the hour.
 
@@ -28,9 +28,9 @@ Every hour's list is published to a public git repository, at a path named after
 
 Searching is made to be (relatively) cheap and to work offline. The required lists can be mirrored by observers. See the `zeitwerk recover` CLI to rebuild a receipt from a list clone.
 
-## Need an Affidavit?
+## Need an affidavit?
 
-For legal and compliance use cases, we offer paid affidavits as a sustainability model. For a small fee (around €5) we'll issue a signed and dated affidavit stating that the unique hash of _this document_ was committed under anchor X on date Y.
+Not offered today. A paid, signed affidavit (around €5) stating that a fingerprint was in hour N is one way someone could fund running a witness: see [#4](https://github.com/digitalevidencetoolkit/zeitwerk/issues/4).
 
 ## Design commitments
 
@@ -41,7 +41,7 @@ For legal and compliance use cases, we offer paid affidavits as a sustainability
 
 ## Status and roadmap
 
-**First Stage — June to November 2026**
+**Built, June to November 2026**
 - [x] Receipt format: Zeitwerk attestations inside the OpenTimestamps format ([#9](https://github.com/digitalevidencetoolkit/zeitwerk/pull/9))
 - [x] Epoch tree and aggregator; inclusion and non-inclusion; receipt recovery from a published list ([#15](https://github.com/digitalevidencetoolkit/zeitwerk/pull/15))
 - [x] Trust anchor ([#1](https://github.com/digitalevidencetoolkit/zeitwerk/issues/1)), hourly epoch ([#2](https://github.com/digitalevidencetoolkit/zeitwerk/issues/2)), git as publication target ([#3](https://github.com/digitalevidencetoolkit/zeitwerk/issues/3))
@@ -53,7 +53,11 @@ For legal and compliance use cases, we offer paid affidavits as a sustainability
 - [x] A public witness at [witness.digitalevidencetoolkit.org](https://witness.digitalevidencetoolkit.org), capped per hour ([#37](https://github.com/digitalevidencetoolkit/zeitwerk/pull/37))
 - [x] A second witness, run independently by Olaia.eu at [witness.olaia.eu](https://witness.olaia.eu) since 20 November; [federation.json](federation.json) lists the witnesses
 - [x] Two mirrors of our record, kept by the [Guardian Project](https://guardianproject.dev/nathan/zeitwerk-epochs) and [Authentic Memory](https://zeitwerk.authenticmemory.org); [zeitwerk.digitalevidencetoolkit.org](https://zeitwerk.digitalevidencetoolkit.org) shows every witness and mirror. We keep an append-only copy of Olaia.eu's record at [digitalevidencetoolkit/olaia-zeitwerk-epochs](https://github.com/digitalevidencetoolkit/olaia-zeitwerk-epochs), pushed hourly by [deploy/mirror.sh](deploy/mirror.sh)
-- [ ] November: written proof format spec, N-of-M growth
+
+**Not built**
+- Nothing yet checks that several witnesses agree on an hour: each proof is one witness's signature (v0)
+- No written spec of the format
+- No RFC 3161 or C2PA export ([#5](https://github.com/digitalevidencetoolkit/zeitwerk/issues/5), [#7](https://github.com/digitalevidencetoolkit/zeitwerk/issues/7))
 
 ⚠️ Receipts are not stable yet: the attestation tags are placeholders for now, so don't rely on anything Zeitwerk issues today.
 
@@ -68,10 +72,10 @@ openssl dgst -sha256 -binary doc.pdf | curl -s --data-binary @- https://witness.
 
 Anything sent there is published for good to public git, so send fingerprints only. Each hour takes up to 5,000; past that the witness answers 503 until the next hour. Its signing key is `6ca8feb89f12145e`, published in our DNS zone at `_zeitwerk.digitalevidencetoolkit.org`. To verify, see [Verify a document](#verify-a-document); the endpoints under Quickstart work against it too. Every witness, each read from its own public record, is listed at https://zeitwerk.digitalevidencetoolkit.org.
 
-## Run a signer
+## Be a witness
 
 **We need you!**
-The institutions that participate in the federation are the real strength of the system. The commitment is relatively low: a signer runs a small daemon that signs the epoch roots every hour. These are only 32-byte hashes, with no user data and don't require a full server to operate.
+The institutions that participate in the federation are the real strength of the system. The commitment is relatively low: a witness is a small daemon that signs one epoch root every hour. These are only 32-byte hashes, with no user data and don't require a full server to operate.
 
 [docs/witness-onboarding.md](docs/witness-onboarding.md) is the whole setup: one Python service, one signing key, one git repository, under an hour on a 512 MB VM. Once yours runs, adding it to [federation.json](federation.json) is one pull request.
 
@@ -112,7 +116,17 @@ curl -s "http://127.0.0.1:14788/recover/<sha256 hex>?epoch=N"  # from the publis
 
 ## Verify a document
 
-`make setup` installs the `zeitwerk` command into `.venv/bin/`. It works offline, from a clone of the [published hours](https://github.com/digitalevidencetoolkit/zeitwerk-epochs):
+`make setup` installs the `zeitwerk` command into `.venv/bin/`. It works offline, from a clone of the [published hours](https://github.com/digitalevidencetoolkit/zeitwerk-epochs). From scratch:
+
+```sh
+git clone https://github.com/digitalevidencetoolkit/zeitwerk && cd zeitwerk
+git clone https://github.com/digitalevidencetoolkit/zeitwerk-epochs ../zeitwerk-epochs
+make setup && source .venv/bin/activate
+printf hello > hello.txt
+zeitwerk verify hello.txt --epochs ../zeitwerk-epochs   # VERIFIED, hour 498469
+```
+
+Then, for your own documents:
 
 ```sh
 # I have the receipt: check it against the witness's public key
