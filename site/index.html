@@ -45,6 +45,8 @@ nav a { margin-right: 8px; }
 strong, b { color: var(--heading); }
 code { font-family: monospace; padding: 2px; background: #f2f2f2; border-radius: 3px; font-size: .9em; }
 footer { padding: 25px 0; text-align: center; font-size: .85em; color: var(--muted); }
+/* The logos' white background blends into the page's off-white. */
+footer .funding { display: block; margin: 1.2em auto 0; max-width: 100%; height: auto; mix-blend-mode: multiply; }
 .note { color: var(--muted); font-size: .9em; margin-top: 0; }
 
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 1rem; }
@@ -103,6 +105,7 @@ footer { padding: 25px 0; text-align: center; font-size: .85em; color: var(--mut
   <a href="https://digitalevidencetoolkit.org/tools/zeitwerk-timestamping/">Zeitwerk</a> is free, open-source timestamping without the blockchain ·
   <a href="https://github.com/digitalevidencetoolkit/zeitwerk">source</a> ·
   <a href="https://github.com/digitalevidencetoolkit/zeitwerk/blob/main/docs/witness-onboarding.md">run a witness</a>
+  <img class="funding" src="funding.png" width="360" height="125" alt="Gefördert vom Bundesministerium für Forschung, Technologie und Raumfahrt · Open Knowledge Foundation Deutschland">
 </footer>
 
 <script>
@@ -373,5 +376,6 @@ async function start() {
 
 start();
 </script>
+<script defer src=https://static.cloudflareinsights.com/beacon.min.js data-cf-beacon='{"token": "6f4bf4fdd21e4cbb9daf17f573879d53"}'></script><script data-goatcounter=https://deptoolkit.goatcounter.com/count async src=//gc.zgo.at/count.js></script>
 </body>
 </html>
