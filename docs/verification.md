@@ -2,7 +2,6 @@
 
 Was _this_ document timestamped by Zeitwerk? Can I answer this question while being offline? Are the clues to answering this question public or gatekept by operators in some ways?
 
-
 **Let's start from a working install of our tool**, as well as a clone of one of the available mirrors:
 
 ```sh

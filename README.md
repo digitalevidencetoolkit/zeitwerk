@@ -144,7 +144,7 @@ zeitwerk verify doc.pdf --epochs ../zeitwerk-epochs --dns digitalevidencetoolkit
 
 The first argument is a file to hash or a 64-hex fingerprint. Exit code 0 means verified, 1 not verified (reason on stderr), 2 bad input.
 
-[VERIFICATION.md](VERIFICATION.md) has an example and the output format; [docs/verification.md](docs/verification.md) does the same checks by hand with the library, and lists how each one can fail. On their own, the two `--epochs` commands take the signing key from the clone itself. `--dns` closes that gap: the key must also be published at `_zeitwerk.<domain>`, and the `dns` line says whether a validating resolver confirmed it with DNSSEC.
+[docs/verification.md](docs/verification.md) has a worked example and the output format. On their own, the two `--epochs` commands take the signing key from the clone itself. `--dns` closes that gap: the key must also be published at `_zeitwerk.<domain>`, and the `dns` line says whether a validating resolver confirmed it with DNSSEC.
 
 ## License
 
